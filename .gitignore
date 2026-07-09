@@ -1,0 +1,91 @@
+# =========================================================
+# Environment & secrets
+# =========================================================
+# Service-account / Firebase Admin SDK private key
+private-key.json
+*-private-key.json
+*service-account*.json
+*firebase-adminsdk*.json
+# Local .env with real secrets — DO NOT commit. Use .env.example as template.
+/.env
+.env.local
+.env.*.local
+# Generic secrets
+*.pem
+*.key
+*.crt
+*.p12
+
+# =========================================================
+# Go build artifacts
+# =========================================================
+# Compiled binaries
+/server.exe
+/server
+/server.out
+/server.err
+/server.exe~
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# Standard Go layout output dirs (if/when adopted)
+bin/
+dist/
+# Scratch / experiment folders
+tmp/
+scratch/
+# Test binaries / coverage
+*.test
+*.test.exe
+*.out
+coverage.html
+coverage.txt
+# Default names produced by `go test -coverprofile=` and friends
+coverage.out
+c.out
+*.cover
+coverage.xml
+# CPU / mem / block / mutex / trace profiles from `go test -.*profile`
+*.prof
+*.trace
+# Native Go 1.20+ integration coverage dir (GOCOVERDIR)
+gocover/
+# Go workspace
+go.work
+go.work.sum
+# Vendoring (if used locally — not vendored yet)
+# vendor/
+
+# =========================================================
+# IDE & editor
+# =========================================================
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+# Patch / merge backups
+*.bak
+*.orig
+*.rej
+# Per-developer Makefile overrides (e.g. PORT, BIN overrides)
+Makefile.local
+
+# =========================================================
+# OS files
+# =========================================================
+.DS_Store
+**/.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================================================
+# Logs & runtime
+# =========================================================
+*.log
+logs/
+# VS Code Copilot / agent debug logs
+debug-logs/
