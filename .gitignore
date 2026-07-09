@@ -73,6 +73,8 @@ go.work.sum
 *.rej
 # Per-developer Makefile overrides (e.g. PORT, BIN overrides)
 Makefile.local
+# Internal project planning / spec notes
+spec-notes.txt
 
 # =========================================================
 # OS files

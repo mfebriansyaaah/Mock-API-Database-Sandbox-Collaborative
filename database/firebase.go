@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 
+	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go"
 	"firebase.google.com/go/auth"
 	"google.golang.org/api/option"
@@ -59,6 +60,15 @@ func NewFirebaseApp() (*firebase.App, error) {
 	}
 
 	return app, nil
+}
+
+// GetFirestoreClient returns the Firestore client for the given Firebase app.
+func GetFirestoreClient(app *firebase.App) (*firestore.Client, error) {
+	client, err := app.Firestore(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("error getting Firestore client: %v", err)
+	}
+	return client, nil
 }
 
 // GetAuthClient returns the Firebase Auth client.

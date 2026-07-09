@@ -9,6 +9,7 @@ import (
 	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/database"
 	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/logger"
 	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/middleware"
+	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/sandbox"
 )
 
 func main() {
@@ -21,6 +22,13 @@ func main() {
 		log.Fatalf("Failed to initialize Firebase: %v", err)
 	}
 	log.Printf("Successfully connected to Firebase project: %s", cfg.ProjectID)
+
+	// Initialize Firestore client.
+	firestoreClient, err := database.GetFirestoreClient(app)
+	if err != nil {
+		log.Fatalf("Failed to initialize Firestore: %v", err)
+	}
+	log.Printf("Successfully connected to Firestore")
 
 	// Initialize Auth client.
 	if authClient, err := database.GetAuthClient(app); err != nil {
@@ -44,11 +52,24 @@ func main() {
 	}
 	defer l.Close()
 
+	// Initialize sandbox handler.
+	sandboxHandler := sandbox.NewSandboxHandler(firestoreClient, cfg.ProjectID)
+
 	// HTTP routes.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/hello", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Hello, Firebase World!"))
 	})
+
+	// Dynamic sandbox routes: /sandbox/{projectId}/{table}
+	mux.HandleFunc("GET /sandbox/{projectId}/{table}", sandboxHandler.HandleRequest)
+	mux.HandleFunc("GET /sandbox/{projectId}/{table}/", sandboxHandler.HandleRequest)
+	mux.HandleFunc("GET /sandbox/{projectId}/{table}/{id}", sandboxHandler.HandleRequest)
+	mux.HandleFunc("POST /sandbox/{projectId}/{table}", sandboxHandler.HandleRequest)
+	mux.HandleFunc("POST /sandbox/{projectId}/{table}/{id}", sandboxHandler.HandleRequest)
+	mux.HandleFunc("PUT /sandbox/{projectId}/{table}/{id}", sandboxHandler.HandleRequest)
+	mux.HandleFunc("PATCH /sandbox/{projectId}/{table}/{id}", sandboxHandler.HandleRequest)
+	mux.HandleFunc("DELETE /sandbox/{projectId}/{table}/{id}", sandboxHandler.HandleRequest)
 
 	// Wrap with logging middleware.
 	handler := middleware.Logging(l, cfg.ProjectID)(mux)
