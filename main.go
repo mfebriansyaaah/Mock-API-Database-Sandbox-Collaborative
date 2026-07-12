@@ -16,27 +16,15 @@ func main() {
 	// Load configuration (env + optional .env).
 	cfg := config.Load()
 
-	// Initialize Firebase.
-	app, err := database.NewFirebaseApp()
+	// Initialize database client based on configuration
+	dbConfig := createDatabaseConfig(&cfg)
+	dbClient, err := database.NewDatabaseClient(context.Background(), dbConfig)
 	if err != nil {
-		log.Fatalf("Failed to initialize Firebase: %v", err)
+		log.Fatalf("Failed to initialize database client: %v", err)
 	}
-	log.Printf("Successfully connected to Firebase project: %s", cfg.ProjectID)
+	defer dbClient.Close()
 
-	// Initialize Firestore client.
-	firestoreClient, err := database.GetFirestoreClient(app)
-	if err != nil {
-		log.Fatalf("Failed to initialize Firestore: %v", err)
-	}
-	log.Printf("Successfully connected to Firestore")
-
-	// Initialize Auth client.
-	if authClient, err := database.GetAuthClient(app); err != nil {
-		log.Printf("Warning: Failed to initialize Auth client: %v", err)
-	} else {
-		log.Printf("Firebase Auth client initialized successfully")
-		_ = authClient // reserved for future use
-	}
+	log.Printf("Successfully connected to %s database", dbConfig.Type)
 
 	// Initialize the asynchronous logger.
 	ctx := context.Background()
@@ -53,7 +41,7 @@ func main() {
 	defer l.Close()
 
 	// Initialize sandbox handler.
-	sandboxHandler := sandbox.NewSandboxHandler(firestoreClient, cfg.ProjectID)
+	sandboxHandler := sandbox.NewSandboxHandler(dbClient, cfg.ProjectID)
 
 	// HTTP routes.
 	mux := http.NewServeMux()
@@ -75,8 +63,43 @@ func main() {
 	handler := middleware.Logging(l, cfg.ProjectID)(mux)
 
 	// Start the server.
-	log.Printf("Starting server on port %s", cfg.Port)
+	log.Printf("Starting server on port %s with %s database backend", cfg.Port, dbConfig.Type)
 	if err := http.ListenAndServe(":"+cfg.Port, handler); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
+}
+
+// createDatabaseConfig creates a database configuration from the main config
+func createDatabaseConfig(cfg *config.Config) *database.DatabaseConfig {
+	dbConfig := &database.DatabaseConfig{
+		Type: database.DatabaseType(cfg.Database.Type),
+	}
+
+	switch cfg.Database.Type {
+	case "firestore":
+		dbConfig.FirestoreConfig = &database.FirestoreConfig{
+			ProjectID:       cfg.Database.FirestoreProjectID,
+			CredentialsFile: cfg.Database.FirestoreCredentialsFile,
+		}
+	case "postgresql":
+		dbConfig.PostgreSQLConfig = &database.PostgreSQLConfig{
+			Host:     cfg.Database.PostgreSQLHost,
+			Port:     cfg.Database.PostgreSQLPort,
+			User:     cfg.Database.PostgreSQLUser,
+			Password: cfg.Database.PostgreSQLPassword,
+			Database: cfg.Database.PostgreSQLDatabase,
+			SSLMode:  cfg.Database.PostgreSQLSSLMode,
+		}
+	case "mysql":
+		dbConfig.MySQLConfig = &database.MySQLConfig{
+			Host:      cfg.Database.MySQLHost,
+			Port:      cfg.Database.MySQLPort,
+			User:      cfg.Database.MySQLUser,
+			Password:  cfg.Database.MySQLPassword,
+			Database:  cfg.Database.MySQLDatabase,
+			ParseTime: true,
+		}
+	}
+
+	return dbConfig
 }

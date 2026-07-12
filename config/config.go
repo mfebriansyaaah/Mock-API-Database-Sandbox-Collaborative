@@ -17,8 +17,36 @@ type Config struct {
 	Port      string
 	ProjectID string
 
+	// Database configuration
+	Database DatabaseConfig
+
 	// Logger
 	Logger LoggerConfig
+}
+
+// DatabaseConfig holds configuration for the database
+type DatabaseConfig struct {
+	// Type of database: "firestore", "postgresql", or "mysql"
+	Type string
+
+	// Firestore specific configuration
+	FirestoreProjectID       string
+	FirestoreCredentialsFile string
+
+	// PostgreSQL specific configuration
+	PostgreSQLHost     string
+	PostgreSQLPort     string
+	PostgreSQLUser     string
+	PostgreSQLPassword string
+	PostgreSQLDatabase string
+	PostgreSQLSSLMode  string
+
+	// MySQL specific configuration
+	MySQLHost     string
+	MySQLPort     string
+	MySQLUser     string
+	MySQLPassword string
+	MySQLDatabase string
 }
 
 // LoggerConfig is the subset of Config consumed by the logger package.
@@ -40,6 +68,24 @@ const (
 	EnvLogMaxLogsPerProject = "LOG_MAX_LOGS_PER_PROJECT"
 )
 
+// Database configuration environment variable keys
+const (
+	EnvDatabaseType             = "DATABASE_TYPE"
+	EnvFirestoreProjectID       = "FIRESTORE_PROJECT_ID"
+	EnvFirestoreCredentialsFile = "FIRESTORE_CREDENTIALS_FILE"
+	EnvPostgreSQLHost           = "POSTGRES_HOST"
+	EnvPostgreSQLPort           = "POSTGRES_PORT"
+	EnvPostgreSQLUser           = "POSTGRES_USER"
+	EnvPostgreSQLPassword       = "POSTGRES_PASSWORD"
+	EnvPostgreSQLDatabase       = "POSTGRES_DB"
+	EnvPostgreSQLSSLMode        = "POSTGRES_SSL_MODE"
+	EnvMySQLHost                = "MYSQL_HOST"
+	EnvMySQLPort                = "MYSQL_PORT"
+	EnvMySQLUser                = "MYSQL_USER"
+	EnvMySQLPassword            = "MYSQL_PASSWORD"
+	EnvMySQLDatabase            = "MYSQL_DB"
+)
+
 // Default values applied when env vars are missing or invalid.
 const (
 	defaultPort                 = "8080"
@@ -47,6 +93,7 @@ const (
 	defaultLogNumWorkers        = 10
 	defaultLogCleanupInterval   = 5 * time.Minute
 	defaultLogMaxLogsPerProject = 100
+	defaultDatabaseType         = "firestore"
 )
 
 // Load reads `.env` (if present) into the process env, then constructs a
@@ -60,6 +107,22 @@ func Load() Config {
 	cfg := Config{
 		Port:      getString(EnvPort, defaultPort),
 		ProjectID: getString(EnvProjectID, "mockapi-sandbox-dev"),
+		Database: DatabaseConfig{
+			Type:                     getString(EnvDatabaseType, defaultDatabaseType),
+			FirestoreProjectID:       getString(EnvFirestoreProjectID, ""),
+			FirestoreCredentialsFile: getString(EnvFirestoreCredentialsFile, ""),
+			PostgreSQLHost:           getString(EnvPostgreSQLHost, ""),
+			PostgreSQLPort:           getString(EnvPostgreSQLPort, "5432"),
+			PostgreSQLUser:           getString(EnvPostgreSQLUser, ""),
+			PostgreSQLPassword:       getString(EnvPostgreSQLPassword, ""),
+			PostgreSQLDatabase:       getString(EnvPostgreSQLDatabase, ""),
+			PostgreSQLSSLMode:        getString(EnvPostgreSQLSSLMode, "disable"),
+			MySQLHost:                getString(EnvMySQLHost, ""),
+			MySQLPort:                getString(EnvMySQLPort, "3306"),
+			MySQLUser:                getString(EnvMySQLUser, ""),
+			MySQLPassword:            getString(EnvMySQLPassword, ""),
+			MySQLDatabase:            getString(EnvMySQLDatabase, ""),
+		},
 		Logger: LoggerConfig{
 			ChannelBuffer:     getInt(EnvLogChannelBuffer, defaultLogChannelBuffer),
 			NumWorkers:        getInt(EnvLogNumWorkers, defaultLogNumWorkers),

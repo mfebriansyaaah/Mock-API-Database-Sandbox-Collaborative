@@ -1,41 +1,51 @@
 # Mock API & Database Sandbox Collaborative
 
-A Go-based SaaS sandbox that **dynamically generates mock REST APIs** backed by
-Google Cloud Firestore. Frontend developers can design, test, and persist data
-against realistic endpoints without waiting on a backend team to ship them.
+A Go-based sandbox that **dynamically generates mock REST APIs** backed by your choice of database: **Firestore**, **PostgreSQL**, or **MySQL**. Frontend developers can design schema and test against realistic endpoints without waiting on a backend team.
+
 Built with Go 1.22 and designed for high-concurrency workloads.
 
 ## Why this exists
 
-Distributed teams frequently hit a bottleneck: frontend engineers wait on
-backend engineers to finish an API before they can integrate. This service
-solves that by giving any team the ability to **spin up a sandboxed,
-stateful mock API on demand** and share a public URL with the frontend.
+Distributed teams frequently hit a bottleneck: frontend engineers wait on backend engineers to finish an API before they can integrate. This service solves that by giving any team the ability to **spin up a sandboxed, stateful mock API on demand**.
 
-Data submitted to the sandbox is actually persisted in Firestore, so a `POST`
-followed by a `GET` returns the data you just sent — mimicking real backend
-behaviour rather than serving static fixtures.
+Data submitted to the sandbox is actually persisted in your chosen database, so a `POST` followed by a `GET` returns the data you just sent, mimicking real backend behaviour rather than serving static fixtures.
 
 ## Features
 
-- **Dynamic sandbox endpoints.** CRUD routes are generated on the fly per
-  project: `/sandbox/{projectId}/{table}` and `/sandbox/{projectId}/{table}/{id}`.
-- **Stateful mock data.** Writes (`POST`, `PUT`, `PATCH`) are persisted to
-  Firestore under project-scoped collection paths (`sandbox/{projectId}/{table}`).
+- **Multi-database support.** Choose your backend: Firestore, PostgreSQL, or MySQL.
+- **Dynamic sandbox endpoints.** CRUD routes are generated on the fly per project: `/sandbox/{projectId}/{table}` and `/sandbox/{projectId}/{table}/{id}`.
+- **Stateful mock data.** Writes (`POST`, `PUT`, `PATCH`) are persisted to your configured database under project-scoped paths.
 - **Auto-generated IDs.** `POST` without an `{id}` generates a UUID.
-- **Auto-stamped metadata.** Created/updated timestamps via
-  `firestore.ServerTimestamp`; `PUT`/`PATCH` use `MergeAll` for partial updates.
-- **Non-blocking access logging.** HTTP handlers hand off log entries to a
-  bounded channel; a worker pool writes them to Firestore in the background.
-- **Bounded resources.** Channel buffer, worker count, and write timeouts are
-  all configurable; channel-full drops are counted and never block the client
-  response.
-- **FIFO log retention.** A background routine prunes each project to the
-  configured cap (default 100) on a ticker.
-- **Graceful shutdown.** `Logger.Close()` is idempotent, signal-safe, and
-  cancels the cleanup ticker cleanly.
-- **Cloud-Run ready.** Falls back to Application Default Credentials when
-  `GOOGLE_APPLICATION_CREDENTIALS` is not set.
+- **Auto-stamped metadata.** Created/updated timestamps; `PUT`/`PATCH` use `MergeAll` for partial updates.
+- **Non-blocking access logging.** HTTP handlers hand off log entries to a bounded channel; a worker pool writes them to Firestore in the background (separate from sandbox data).
+- **Bounded resources.** Channel buffer, worker count, and write timeouts are all configurable; channel-full drops are counted and never block the client response.
+- **FIFO log retention.** A background routine prunes each project to the configured cap (default 100) on a ticker.
+- **Graceful shutdown.** `Logger.Close()` is idempotent, signal-safe, and cancels the cleanup ticker cleanly.
+- **Cloud-Run ready.** Falls back to Application Default Credentials when `GOOGLE_APPLICATION_CREDENTIALS` is not set.
+
+## Architecture Overview
+
+```
+┌──────────┐   request   ┌──────────────────┐  Submit(entry)  ┌──────────────┐
+│  client  │ ──────────► │ middleware.      │ ──────────────► │ logger.Logger│
+└──────────┘             │ Logging(...)     │   (non-blocking)│  (Firestore) │
+                         └──────────────────┘                 └──────────────┘
+                                                                      │
+                         ┌──────────────────┐                           │
+                         │ sandbox.Handler  │ ◄───────────────────────┘
+                         │ (CRUD on         │   Sandbox data stored in
+                         │  sandbox/{pid}/  │   chosen database:
+                         │  {table}/{id})   │   Firestore / PostgreSQL / MySQL
+                         └──────────────────┘
+```
+
+**Key design points:**
+
+- **Database abstraction.** The `database.DatabaseClient` interface allows seamless switching between Firestore, PostgreSQL, and MySQL backends without changing handler code.
+- **Separate concerns.** Sandbox data (user data) and access logs are stored in different systems. Logs always go to Firestore; sandbox data goes to your configured database.
+- **`logger.Submitter`** **interface.** `middleware.Logging` depends on a `Submitter` (single-method: `Submit(*LogEntry) bool`), not the concrete `*logger.Logger`. This keeps the middleware trivially unit-testable.
+- **Defer-based latency measurement.** Latency is measured in a `defer` block so it captures panics in the downstream handler as well.
+- **Drop-on-full semantics.** When the in-process channel is saturated, the entry is dropped and a warning is logged. The client response is **never** delayed by logging.
 
 ## Project layout
 
@@ -51,8 +61,13 @@ behaviour rather than serving static fixtures.
 │   ├── config.go
 │   └── config_test.go
 │
-├── database/                  # Firebase Admin SDK init (App, Firestore, Auth)
-│   └── firebase.go
+├── database/                  # Database abstraction layer
+│   ├── db_interface.go        # DatabaseClient interface & factory
+│   ├── firestore_adapter.go   # Firestore implementation
+│   ├── postgresql.go          # PostgreSQL implementation
+│   ├── mysql.go               # MySQL implementation
+│   ├── utils.go               # Table path parsing utilities
+│   └── database_test.go
 │
 ├── logger/                    # Async access-logger package
 │   ├── entry.go               # LogEntry struct + Submitter interface
@@ -66,77 +81,37 @@ behaviour rather than serving static fixtures.
 │
 ├── middleware/                # HTTP middlewares
 │   ├── logging.go             # Logging(Submitter) -> http.Handler middleware
-│   └── logging_test.go        # Unit tests (uses fakeSubmitter)
+│   └── logging_test.go
 │
 └── sandbox/                   # Dynamic mock-API handler
-    └── handler.go             # CRUD handler for /sandbox/{projectId}/{table}/{id}
+    ├── handler.go             # CRUD handler for /sandbox/{projectId}/{table}/{id}
+    └── sandbox_test.go
 ```
-
-## Architecture
-
-```
-┌──────────┐   request   ┌──────────────────┐  Submit(entry)  ┌──────────────┐
-│  client  │ ──────────► │ middleware.      │ ──────────────► │ logger.Logger│
-└──────────┘             │ Logging(...)     │   (non-blocking)│  (interface) │
-                         └──────────────────┘                 └──────┬───────┘
-                                                                     │
-                                                              workers (N)
-                                                                     │
-                                                                     ▼
-                                                              Cloud Firestore
-                                                                     ▲
-                                                                     │
-                         ┌──────────────────┐   direct read/write    │
-                         │ sandbox.Handler  │ ───────────────────────┘
-                         │ (CRUD on         │
-                         │  sandbox/{pid}/  │
-                         │  {table}/{id})   │
-                         └──────────────────┘
-```
-
-Key design points:
-
-- **`logger.Submitter` interface.** `middleware.Logging` depends on a
-  `Submitter` (single-method: `Submit(*LogEntry) bool`), not the concrete
-  `*logger.Logger`. This keeps the middleware trivially unit-testable with a
-  fake, and lets future implementations (in-memory ring buffer, Kafka,
-  OpenTelemetry) drop in without touching middleware code.
-- **Defer-based latency measurement.** Latency is measured in a `defer`
-  block so it captures panics in the downstream handler as well.
-- **Drop-on-full semantics.** When the in-process channel is saturated, the
-  entry is dropped and a warning is logged. The client response is **never**
-  delayed by logging.
-- **Project-scoped collections.** Sandbox data is namespaced under
-  `sandbox/{projectId}/{table}/{id}`, so multiple projects can share a single
-  Firestore instance without collision.
-- **Compile-time check.** `var _ logger.Submitter = (*logger.Logger)(nil)`
-  in the test file guarantees the concrete type satisfies the interface.
 
 ## HTTP routes
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/hello` | Health probe — returns `Hello, Firebase World!` |
-| `GET` | `/sandbox/{projectId}/{table}` | List all documents in a project table |
-| `GET` | `/sandbox/{projectId}/{table}/{id}` | Fetch a single document |
-| `POST` | `/sandbox/{projectId}/{table}` | Create a new document (auto-generated UUID) |
-| `POST` | `/sandbox/{projectId}/{table}/{id}` | Create or overwrite a document with a known id |
-| `PUT` | `/sandbox/{projectId}/{table}/{id}` | Partial update (Firestore `MergeAll`) |
-| `PATCH` | `/sandbox/{projectId}/{table}/{id}` | Partial update (Firestore `MergeAll`) |
-| `DELETE` | `/sandbox/{projectId}/{table}/{id}` | Delete a document |
+| Method   | Path                                | Description                                     |
+| -------- | ----------------------------------- | ----------------------------------------------- |
+| `GET`    | `/hello`                            | Health probe — returns `Hello, Firebase World!` |
+| `GET`    | `/sandbox/{projectId}/{table}`      | List all documents in a project table           |
+| `GET`    | `/sandbox/{projectId}/{table}/{id}` | Fetch a single document                         |
+| `POST`   | `/sandbox/{projectId}/{table}`      | Create a new document (auto-generated UUID)     |
+| `POST`   | `/sandbox/{projectId}/{table}/{id}` | Create or overwrite a document with a known id  |
+| `PUT`    | `/sandbox/{projectId}/{table}/{id}` | Partial update (MergeAll)                       |
+| `PATCH`  | `/sandbox/{projectId}/{table}/{id}` | Partial update (MergeAll)                       |
+| `DELETE` | `/sandbox/{projectId}/{table}/{id}` | Delete a document                               |
 
 All routes are wrapped with the access-logging middleware.
 
 ### Data shape
 
-`POST`/`PUT`/`PATCH` accept any JSON object. The handler automatically
-adds server-side metadata:
+`POST`/`PUT`/`PATCH` accept any JSON object. The handler automatically adds server-side metadata:
 
 ```json
 {
-  "_createdAt": "<Firestore ServerTimestamp>",
+  "_createdAt": "<ServerTimestamp>",
   "_createdBy": "anonymous",
-  "_updatedAt": "<Firestore ServerTimestamp>",
+  "_updatedAt": "<ServerTimestamp>",
   "_updatedBy": "anonymous",
   "...your fields": "..."
 }
@@ -150,15 +125,51 @@ Copy the example env file and edit:
 cp .env.example .env
 ```
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `8080` | HTTP listen port |
-| `GOOGLE_CLOUD_PROJECT` | `mockapi-sandbox-dev` | Firestore project ID |
-| `GOOGLE_APPLICATION_CREDENTIALS` | _(unset)_ | Path to service-account JSON. If unset, ADC is used (Cloud Run / GCE). |
-| `LOG_CHANNEL_BUFFER` | `1000` | Size of the in-process log channel |
-| `LOG_NUM_WORKERS` | `10` | Number of worker goroutines |
-| `LOG_CLEANUP_INTERVAL` | `5m` | How often the FIFO cleanup runs |
-| `LOG_MAX_LOGS_PER_PROJECT` | `100` | Cap on logs retained per project |
+### Core Configuration
+
+| Variable        | Default     | Description                                             |
+| --------------- | ----------- | ------------------------------------------------------- |
+| `PORT`          | `8080`      | HTTP listen port                                        |
+| `DATABASE_TYPE` | `firestore` | Database backend: `firestore`, `postgresql`, or `mysql` |
+
+### Database-Specific Configuration
+
+**Firestore:**
+
+| Variable                         | Default               | Description                                          |
+| -------------------------------- | --------------------- | ---------------------------------------------------- |
+| `GOOGLE_CLOUD_PROJECT`           | `mockapi-sandbox-dev` | Firestore project ID                                 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | _(unset)_             | Path to service-account JSON. If unset, ADC is used. |
+
+**PostgreSQL:**
+
+| Variable            | Description                                |
+| ------------------- | ------------------------------------------ |
+| `POSTGRES_HOST`     | Database host                              |
+| `POSTGRES_PORT`     | Database port (default: 5432)              |
+| `POSTGRES_USER`     | Username                                   |
+| `POSTGRES_PASSWORD` | Password                                   |
+| `POSTGRES_DB`       | Database name                              |
+| `POSTGRES_SSL_MODE` | SSL mode (disable, allow, prefer, require) |
+
+**MySQL:**
+
+| Variable         | Description                   |
+| ---------------- | ----------------------------- |
+| `MYSQL_HOST`     | Database host                 |
+| `MYSQL_PORT`     | Database port (default: 3306) |
+| `MYSQL_USER`     | Username                      |
+| `MYSQL_PASSWORD` | Password                      |
+| `MYSQL_DB`       | Database name                 |
+
+### Logger Configuration
+
+| Variable                   | Default | Description                        |
+| -------------------------- | ------- | ---------------------------------- |
+| `LOG_CHANNEL_BUFFER`       | `1000`  | Size of the in-process log channel |
+| `LOG_NUM_WORKERS`          | `10`    | Number of worker goroutines        |
+| `LOG_CLEANUP_INTERVAL`     | `5m`    | How often the FIFO cleanup runs    |
+| `LOG_MAX_LOGS_PER_PROJECT` | `100`   | Cap on logs retained per project   |
 
 ## Quick start
 
@@ -196,27 +207,24 @@ Logs appear in Firestore at:
 /projects/{GOOGLE_CLOUD_PROJECT}/logs/{logId}
 ```
 
-Sandbox data appears at:
+Sandbox data appears at (depending on your `DATABASE_TYPE`):
 
-```
-/projects/{GOOGLE_CLOUD_PROJECT}/sandbox/{projectId}/{table}/{id}
-```
+- **Firestore:** `/projects/{GOOGLE_CLOUD_PROJECT}/sandbox/{projectId}/{table}/{id}`
+- **PostgreSQL/MySQL:** Tables created under configured database
 
 ## Testing
 
-The project ships with unit tests for all packages that have meaningful
-in-process logic:
+The project ships with unit tests for all packages that have meaningful in-process logic:
 
-| Package | Coverage | What's tested |
-|---|---|---|
-| `config` | `config_test.go` | Default values, env override, invalid-fallback semantics |
-| `logger` | `config_test.go`, `logger_test.go` | Config defaults, non-blocking submit, nil-drop, project tracking (thread-safe), close idempotency |
-| `middleware` | `logging_test.go` | Method/path/projectID recording, status propagation, latency/timestamp, drop on full channel, entry on panic, one-entry-per-request |
+| Package      | Coverage                           | What's tested                                                                                                                       |
+| ------------ | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `config`     | `config_test.go`                   | Default values, env override, invalid-fallback semantics                                                                            |
+| `database`   | `database_test.go`                 | Interface compliance, factory function, table path parsing                                                                          |
+| `logger`     | `config_test.go`, `logger_test.go` | Config defaults, non-blocking submit, nil-drop, project tracking (thread-safe), close idempotency                                   |
+| `middleware` | `logging_test.go`                  | Method/path/projectID recording, status propagation, latency/timestamp, drop on full channel, entry on panic, one-entry-per-request |
+| `sandbox`    | `sandbox_test.go`                  | CRUD operations, error handling, not-found scenarios                                                                                |
 
-`database/firebase.go` and `sandbox/handler.go` are intentionally not
-unit-tested — both are thin wrappers around external services (Firebase Admin
-SDK and live Firestore) and are exercised end-to-end against a real project
-or the Firebase emulator.
+`database/firebase.go` and `sandbox/handler.go` are intentionally not unit-tested, both are thin wrappers around external services (Firebase Admin SDK and database drivers) and are exercised end-to-end against real instances or emulators.
 
 ```bash
 # Run all tests
@@ -233,48 +241,42 @@ go tool cover -html=coverage.out -o coverage.html
 
 ## Security
 
-- **Never commit `private-key.json`.** It is in `.gitignore` for this reason.
-  Rotate any key that has been exposed.
-- In production, prefer **Workload Identity** or ADC over service-account
-  key files.
-- The sandbox writes `_createdBy` / `_updatedBy` as the literal string
-  `"anonymous"` — auth integration is a planned follow-up (the Firebase Auth
-  client is already initialised in `main.go` but currently reserved for
-  future use).
+- **Never commit** **`private-key.json`.** It is in `.gitignore` for this reason. Rotate any key that has been exposed.
+- In production, prefer **Workload Identity** or ADC over service-account key files.
+- The sandbox writes `_createdBy` / `_updatedBy` as the literal string `"anonymous",`auth integration is a planned follow-up (the Firebase Auth client is already initialised in `main.go` but currently reserved for future use).
 - See `.env.example` for the env contract.
 
 ### `.gitignore` coverage
 
-The repository ships with a hardened `.gitignore` that protects against the
-common leaks when running `go test` or `go build` locally:
+The repository ships with a hardened `.gitignore` that protects against the common leaks when running `go test` or `go build` locally:
 
-| Pattern | Protects against |
-|---|---|
-| `private-key.json`, `*service-account*.json` | Firebase / GCP service-account keys |
-| `/.env`, `.env.local`, `.env.*.local` | Local secrets |
-| `*.pem`, `*.key`, `*.crt`, `*.p12` | Generic key material |
-| `*.exe`, `*.exe~`, `/server.exe` | Compiled binaries & editor backups |
-| `*.test`, `*.test.exe` | Test binaries |
-| `coverage.out`, `coverage.html`, `coverage.txt`, `coverage.xml` | Coverage reports |
-| `*.prof`, `*.trace`, `gocover/` | Profiling & native coverage (Go 1.20+) |
-| `bin/`, `dist/`, `tmp/`, `scratch/` | Build output & scratch folders |
-| `debug-logs/` | VS Code Copilot / agent debug logs |
+| Pattern                                                         | Protects against                       |
+| --------------------------------------------------------------- | -------------------------------------- |
+| `private-key.json`, `*service-account*.json`                    | Firebase / GCP service-account keys    |
+| `/.env`, `.env.local`, `.env.*.local`                           | Local secrets                          |
+| `*.pem`, `*.key`, `*.crt`, `*.p12`                              | Generic key material                   |
+| `*.exe`, `*.exe~`, `/server.exe`                                | Compiled binaries & editor backups     |
+| `*.test`, `*.test.exe`                                          | Test binaries                          |
+| `coverage.out`, `coverage.html`, `coverage.txt`, `coverage.xml` | Coverage reports                       |
+| `*.prof`, `*.trace`, `gocover/`                                 | Profiling & native coverage (Go 1.20+) |
+| `bin/`, `dist/`, `tmp/`, `scratch/`                             | Build output & scratch folders         |
+| `debug-logs/`                                                   | VS Code Copilot / agent debug logs     |
 
 Verify with `git check-ignore -v <file>` after `git init`.
 
 ## Make targets
 
-| Target | Action |
-|---|---|
-| `make tidy` | `go mod tidy` |
-| `make build` | Build `server.exe` |
-| `make run` | Run from source (loads `.env` automatically) |
-| `make test` | `go test -race ./...` |
-| `make vet` | `go vet ./...` |
-| `make fmt` | `gofmt -w .` |
-| `make smoke` | Build, start, hit `/hello`, stop |
-| `make clean` | Remove build artifacts |
+| Target       | Action                                       |
+| ------------ | -------------------------------------------- |
+| `make tidy`  | `go mod tidy`                                |
+| `make build` | Build `server.exe`                           |
+| `make run`   | Run from source (loads `.env` automatically) |
+| `make test`  | `go test ./...`                              |
+| `make vet`   | `go vet ./...`                               |
+| `make fmt`   | `gofmt -w .`                                 |
+| `make smoke` | Build, start, hit `/hello`, stop             |
+| `make clean` | Remove build artifacts                       |
 
 ## License
 
-See [LICENSE](LICENSE) (add one for your project).
+See [LICENSE](LICENSE)&#x20;

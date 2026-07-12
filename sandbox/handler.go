@@ -7,20 +7,20 @@ import (
 	"net/http"
 	"strings"
 
-	"cloud.google.com/go/firestore"
 	"github.com/google/uuid"
+	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/database"
 )
 
 // SandboxHandler handles dynamic sandbox endpoints
 type SandboxHandler struct {
-	client    *firestore.Client
+	client    database.DatabaseClient
 	projectID string
 }
 
 // NewSandboxHandler creates a new SandboxHandler
-type NewSandboxHandlerFunc func(client *firestore.Client, projectID string) *SandboxHandler
+type NewSandboxHandlerFunc func(client database.DatabaseClient, projectID string) *SandboxHandler
 
-func NewSandboxHandler(client *firestore.Client, projectID string) *SandboxHandler {
+func NewSandboxHandler(client database.DatabaseClient, projectID string) *SandboxHandler {
 	return &SandboxHandler{
 		client:    client,
 		projectID: projectID,
@@ -61,11 +61,9 @@ func (h *SandboxHandler) handleGet(w http.ResponseWriter, r *http.Request, colle
 
 	if id != "" {
 		// Get single document
-		docRef := h.client.Doc(collectionPath + "/" + id)
-		docSnap, err := docRef.Get(ctx)
+		doc, err := h.client.Get(ctx, collectionPath, id)
 		if err != nil {
-			// Check if this is a "not found" error from Firestore
-			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "NotFound") {
+			if strings.Contains(err.Error(), "not found") {
 				http.Error(w, "Document not found", http.StatusNotFound)
 				return
 			}
@@ -74,7 +72,7 @@ func (h *SandboxHandler) handleGet(w http.ResponseWriter, r *http.Request, colle
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(docSnap.Data()); err != nil {
+		if err := json.NewEncoder(w).Encode(doc); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -82,32 +80,17 @@ func (h *SandboxHandler) handleGet(w http.ResponseWriter, r *http.Request, colle
 	}
 
 	// Get all documents in collection
-	iter := h.client.Collection(collectionPath).Documents(ctx)
-	var results []map[string]interface{}
-
-	for {
-		doc, err := iter.Next()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			// Check for "no more items" error which is equivalent to EOF
-			if err.Error() == "no more items in iterator" {
-				break
-			}
-			http.Error(w, fmt.Sprintf("Failed to iterate documents: %v", err), http.StatusInternalServerError)
-			return
-		}
-		data := doc.Data()
-		data["id"] = doc.Ref.ID
-		results = append(results, data)
+	docs, err := h.client.GetAll(ctx, collectionPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get documents: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if results == nil {
-		results = []map[string]interface{}{}
+	if docs == nil {
+		docs = []database.Document{}
 	}
-	if err := json.NewEncoder(w).Encode(results); err != nil {
+	if err := json.NewEncoder(w).Encode(docs); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -124,7 +107,7 @@ func (h *SandboxHandler) handlePost(w http.ResponseWriter, r *http.Request, coll
 	}
 
 	// Parse JSON
-	var data map[string]interface{}
+	var data database.Document
 	if err := json.Unmarshal(body, &data); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
@@ -132,21 +115,26 @@ func (h *SandboxHandler) handlePost(w http.ResponseWriter, r *http.Request, coll
 
 	// Add metadata
 	if data == nil {
-		data = make(map[string]interface{})
+		data = make(database.Document)
 	}
-	data["_createdAt"] = firestore.ServerTimestamp
-	data["_createdBy"] = "anonymous" // TODO: Add auth
+	data["_createdAt"] = "server_timestamp" // Will be handled by database adapter
+	data["_createdBy"] = "anonymous"        // TODO: Add auth
 
 	// Use provided ID or generate new one
 	if id == "" {
 		id = uuid.New().String()
 	}
 
-	// Set document
-	docRef := h.client.Doc(collectionPath + "/" + id)
-	if _, err := docRef.Set(ctx, data); err != nil {
+	// Create document
+	createdID, err := h.client.Create(ctx, collectionPath, id, data)
+	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create document: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// If ID was auto-generated, use the returned ID
+	if id == "" {
+		id = createdID
 	}
 
 	// Return created document
@@ -174,20 +162,12 @@ func (h *SandboxHandler) handleDelete(w http.ResponseWriter, r *http.Request, co
 		return
 	}
 
-	// First check if document exists
-	docRef := h.client.Doc(collectionPath + "/" + id)
-	_, err := docRef.Get(ctx)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "NotFound") {
+	// Delete document
+	if err := h.client.Delete(ctx, collectionPath, id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
 			http.Error(w, "Document not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, fmt.Sprintf("Failed to check document: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Document exists, delete it
-	if _, err := docRef.Delete(ctx); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to delete document: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -213,7 +193,7 @@ func (h *SandboxHandler) handleUpdate(w http.ResponseWriter, r *http.Request, co
 	}
 
 	// Parse JSON
-	var data map[string]interface{}
+	var data database.Document
 	if err := json.Unmarshal(body, &data); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
@@ -221,14 +201,17 @@ func (h *SandboxHandler) handleUpdate(w http.ResponseWriter, r *http.Request, co
 
 	// Add metadata
 	if data == nil {
-		data = make(map[string]interface{})
+		data = make(database.Document)
 	}
-	data["_updatedAt"] = firestore.ServerTimestamp
-	data["_updatedBy"] = "anonymous" // TODO: Add auth
+	data["_updatedAt"] = "server_timestamp" // Will be handled by database adapter
+	data["_updatedBy"] = "anonymous"        // TODO: Add auth
 
 	// Update document
-	docRef := h.client.Doc(collectionPath + "/" + id)
-	if _, err := docRef.Set(ctx, data, firestore.MergeAll); err != nil {
+	if err := h.client.Update(ctx, collectionPath, id, data); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			http.Error(w, "Document not found", http.StatusNotFound)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to update document: %v", err), http.StatusInternalServerError)
 		return
 	}

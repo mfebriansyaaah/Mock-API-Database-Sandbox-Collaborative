@@ -1,12 +1,14 @@
 module github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative
 
-go 1.22
+go 1.24.0
 
 require (
 	cloud.google.com/go/firestore v1.14.0
 	firebase.google.com/go v3.13.0+incompatible
+	github.com/go-sql-driver/mysql v1.10.0
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
+	github.com/lib/pq v1.12.3
 	google.golang.org/api v0.169.0
 )
 
@@ -17,6 +19,7 @@ require (
 	cloud.google.com/go/iam v1.1.6 // indirect
 	cloud.google.com/go/longrunning v0.5.5 // indirect
 	cloud.google.com/go/storage v1.38.0 // indirect
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
