@@ -2,7 +2,7 @@
 
 A Go-based sandbox that **dynamically generates mock REST APIs** backed by your choice of database: **Firestore**, **PostgreSQL**, or **MySQL**. Frontend developers can design schema and test against realistic endpoints without waiting on a backend team.
 
-Built with Go 1.22 and designed for high-concurrency workloads.
+Built with Go 1.24 and designed for high-concurrency workloads. Ships with a built-in **Web UI** (Vite + React) for visual sandbox management.
 
 ## Why this exists
 
@@ -17,6 +17,8 @@ Data submitted to the sandbox is actually persisted in your chosen database, so 
 - **Stateful mock data.** Writes (`POST`, `PUT`, `PATCH`) are persisted to your configured database under project-scoped paths.
 - **Auto-generated IDs.** `POST` without an `{id}` generates a UUID.
 - **Auto-stamped metadata.** Created/updated timestamps; `PUT`/`PATCH` use `MergeAll` for partial updates.
+- **Server-side pagination.** `GET /sandbox/{projectId}/{table}` accepts `?limit=N&offset=M` (default 25, max 100) and returns a `{ data, limit, offset, count, nextOffset }` envelope.
+- **Quota-aware errors.** Firestore `ResourceExhausted` / `Quota exceeded` is surfaced as HTTP `503` with a retry-friendly message.
 - **Non-blocking access logging.** HTTP handlers hand off log entries to a bounded channel; a worker pool writes them to Firestore in the background (separate from sandbox data).
 - **Bounded resources.** Channel buffer, worker count, and write timeouts are all configurable; channel-full drops are counted and never block the client response.
 - **FIFO log retention.** A background routine prunes each project to the configured cap (default 100) on a ticker.
@@ -62,8 +64,9 @@ Data submitted to the sandbox is actually persisted in your chosen database, so 
 │   └── config_test.go
 │
 ├── database/                  # Database abstraction layer
-│   ├── db_interface.go        # DatabaseClient interface & factory
-│   ├── firestore_adapter.go   # Firestore implementation
+│   ├── db_interface.go        # DatabaseClient interface, GetAllOptions, factory
+│   ├── firestore_adapter.go   # Firestore implementation (active adapter)
+│   ├── firebase.go            # Legacy Firebase Admin SDK wrapper
 │   ├── postgresql.go          # PostgreSQL implementation
 │   ├── mysql.go               # MySQL implementation
 │   ├── utils.go               # Table path parsing utilities
@@ -83,25 +86,56 @@ Data submitted to the sandbox is actually persisted in your chosen database, so 
 │   ├── logging.go             # Logging(Submitter) -> http.Handler middleware
 │   └── logging_test.go
 │
-└── sandbox/                   # Dynamic mock-API handler
-    ├── handler.go             # CRUD handler for /sandbox/{projectId}/{table}/{id}
-    └── sandbox_test.go
+├── sandbox/                   # Dynamic mock-API handler
+│   ├── handler.go             # CRUD handler for /sandbox/{projectId}/{table}/{id}
+│   └── sandbox_test.go
+│
+└── web-ui/                    # Vite + React 18 admin console (JS, Tailwind)
+    ├── README.md              # Frontend-specific docs
+    ├── package.json
+    ├── vite.config.js         # Dev proxy to :8080
+    └── src/                   # App entry, pages, components, stores, api
 ```
 
 ## HTTP routes
 
-| Method   | Path                                | Description                                     |
-| -------- | ----------------------------------- | ----------------------------------------------- |
-| `GET`    | `/hello`                            | Health probe — returns `Hello, Firebase World!` |
-| `GET`    | `/sandbox/{projectId}/{table}`      | List all documents in a project table           |
-| `GET`    | `/sandbox/{projectId}/{table}/{id}` | Fetch a single document                         |
-| `POST`   | `/sandbox/{projectId}/{table}`      | Create a new document (auto-generated UUID)     |
-| `POST`   | `/sandbox/{projectId}/{table}/{id}` | Create or overwrite a document with a known id  |
-| `PUT`    | `/sandbox/{projectId}/{table}/{id}` | Partial update (MergeAll)                       |
-| `PATCH`  | `/sandbox/{projectId}/{table}/{id}` | Partial update (MergeAll)                       |
-| `DELETE` | `/sandbox/{projectId}/{table}/{id}` | Delete a document                               |
+| Method   | Path                                | Description                                          |
+| -------- | ----------------------------------- | ---------------------------------------------------- |
+| `GET`    | `/hello`                            | Health probe — returns `Hello, Firebase World!`      |
+| `GET`    | `/sandbox/{projectId}/{table}`      | List documents (supports `?limit&offset`, see below) |
+| `GET`    | `/sandbox/{projectId}/{table}/{id}` | Fetch a single document                              |
+| `POST`   | `/sandbox/{projectId}/{table}`      | Create a new document (auto-generated UUID)          |
+| `POST`   | `/sandbox/{projectId}/{table}/{id}` | Create or overwrite a document with a known id       |
+| `PUT`    | `/sandbox/{projectId}/{table}/{id}` | Partial update (MergeAll)                            |
+| `PATCH`  | `/sandbox/{projectId}/{table}/{id}` | Partial update (MergeAll)                            |
+| `DELETE` | `/sandbox/{projectId}/{table}/{id}` | Delete a document                                    |
 
 All routes are wrapped with the access-logging middleware.
+
+### List endpoint pagination
+
+`GET /sandbox/{projectId}/{table}` accepts two optional query parameters:
+
+| Param    | Default | Max   | Description                                  |
+| -------- | ------- | ----- | -------------------------------------------- |
+| `limit`  | `25`    | `100` | Maximum documents to return in this page     |
+| `offset` | `0`     | —     | Number of documents to skip before this page |
+
+The response is wrapped in an envelope so the UI can render pagination controls:
+
+```json
+{
+  "data":       [ { "id": "...", "...": "..." } ],
+  "limit":      25,
+  "offset":     0,
+  "count":      17,
+  "nextOffset": 17
+}
+```
+
+If the underlying adapter hits a backend quota (e.g. Firestore's 1 MiB response
+limit), the server returns HTTP `503 Service Unavailable` with a message
+suggesting a smaller `?limit=` or a retry.
 
 ### Data shape
 
@@ -127,10 +161,11 @@ cp .env.example .env
 
 ### Core Configuration
 
-| Variable        | Default     | Description                                             |
-| --------------- | ----------- | ------------------------------------------------------- |
-| `PORT`          | `8080`      | HTTP listen port                                        |
-| `DATABASE_TYPE` | `firestore` | Database backend: `firestore`, `postgresql`, or `mysql` |
+| Variable               | Default               | Description                                             |
+| ---------------------- | --------------------- | ------------------------------------------------------- |
+| `PORT`                 | `8080`                | HTTP listen port                                        |
+| `DATABASE_TYPE`        | _(unset)_             | Database backend: `firestore`, `postgresql`, or `mysql` |
+| `GOOGLE_CLOUD_PROJECT` | `mockapi-sandbox-dev` | GCP project used for Firestore + log writes             |
 
 ### Database-Specific Configuration
 
@@ -212,6 +247,39 @@ Sandbox data appears at (depending on your `DATABASE_TYPE`):
 - **Firestore:** `/projects/{GOOGLE_CLOUD_PROJECT}/sandbox/{projectId}/{table}/{id}`
 - **PostgreSQL/MySQL:** Tables created under configured database
 
+## Web UI
+
+A Vite + React 18 admin console lives in [`web-ui/`](web-ui/). It is the
+recommended way to explore the sandbox without writing `curl` calls by hand.
+
+```bash
+# 1. start the Go backend (terminal A)
+make run
+
+# 2. start the web UI (terminal B)
+cd web-ui
+npm install
+npm run dev
+```
+
+The Vite dev server runs on <http://localhost:5173> and proxies `/sandbox` and
+`/hello` to the Go backend on <http://localhost:8080>, so the UI uses relative
+URLs and the browser never sees a CORS preflight.
+
+Highlights:
+
+- **Overview** — Live stats per project, table, and document count.
+- **Projects / Tables / Documents** — Visual CRUD with bulk operations and
+  server-side pagination (default 25/page, options 10/25/50/100).
+- **REST Tester** — Arbitrary `GET/POST/PUT/PATCH/DELETE` against any sandbox
+  path, with JSON body editing and a response viewer (`Ctrl+Enter` to send).
+- **Access Logs / Settings** — Local-only views; the Go backend owns the
+  canonical Firestore log store.
+- **Light / Dark theme** with smooth transitions and a responsive bottom-nav
+  on mobile.
+
+See [`web-ui/README.md`](web-ui/README.md) for the full frontend documentation.
+
 ## Testing
 
 The project ships with unit tests for all packages that have meaningful in-process logic:
@@ -224,7 +292,11 @@ The project ships with unit tests for all packages that have meaningful in-proce
 | `middleware` | `logging_test.go`                  | Method/path/projectID recording, status propagation, latency/timestamp, drop on full channel, entry on panic, one-entry-per-request |
 | `sandbox`    | `sandbox_test.go`                  | CRUD operations, error handling, not-found scenarios                                                                                |
 
-`database/firebase.go` and `sandbox/handler.go` are intentionally not unit-tested, both are thin wrappers around external services (Firebase Admin SDK and database drivers) and are exercised end-to-end against real instances or emulators.
+`database/firebase.go` is a thin wrapper around the Firebase Admin SDK and is
+intentionally not unit-tested, it is exercised end-to-end against a real
+Firestore instance or the emulator. `sandbox/handler.go` is covered indirectly
+by `sandbox/sandbox_test.go` (via the `MockDatabaseClient`), its thin HTTP
+plumbing is the only piece not asserted at the unit level.
 
 ```bash
 # Run all tests
@@ -241,9 +313,9 @@ go tool cover -html=coverage.out -o coverage.html
 
 ## Security
 
-- **Never commit** **`private-key.json`.** It is in `.gitignore` for this reason. Rotate any key that has been exposed.
+- **Never commit** `private-key.json`. It is in `.gitignore` for this reason. Rotate any key that has been exposed.
 - In production, prefer **Workload Identity** or ADC over service-account key files.
-- The sandbox writes `_createdBy` / `_updatedBy` as the literal string `"anonymous",`auth integration is a planned follow-up (the Firebase Auth client is already initialised in `main.go` but currently reserved for future use).
+- The sandbox writes `_createdBy` / `_updatedBy` as the literal string `"anonymous"`. Real auth integration is a planned follow-up (the Firebase Auth client is already initialised in `main.go` but currently reserved for future use).
 - See `.env.example` for the env contract.
 
 ### `.gitignore` coverage
