@@ -115,8 +115,9 @@ func (c *MySQLClient) Get(ctx context.Context, tablePath string, id string) (Doc
 	return doc, nil
 }
 
-// GetAll retrieves all documents from the specified table
-func (c *MySQLClient) GetAll(ctx context.Context, tablePath string) ([]Document, error) {
+// GetAll retrieves documents from the specified table.
+// Supports optional pagination via opts (Limit / Offset).
+func (c *MySQLClient) GetAll(ctx context.Context, tablePath string, opts *GetAllOptions) ([]Document, error) {
 	// Parse table path (format: sandbox/{projectId}/{table})
 	tableName, err := parseTablePath(tablePath)
 	if err != nil {
@@ -124,7 +125,16 @@ func (c *MySQLClient) GetAll(ctx context.Context, tablePath string) ([]Document,
 	}
 
 	query := fmt.Sprintf("SELECT * FROM %s", tableName)
-	rows, err := c.db.QueryContext(ctx, query)
+	args := []interface{}{}
+	if opts != nil && opts.Limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, opts.Limit)
+	}
+	if opts != nil && opts.Offset > 0 {
+		query += " OFFSET ?"
+		args = append(args, opts.Offset)
+	}
+	rows, err := c.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query MySQL: %v", err)
 	}

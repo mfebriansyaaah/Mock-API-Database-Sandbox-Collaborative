@@ -37,7 +37,7 @@ func (m *MockDatabaseClient) Get(ctx context.Context, collectionPath string, id 
 	return nil, fmt.Errorf("document not found")
 }
 
-func (m *MockDatabaseClient) GetAll(ctx context.Context, collectionPath string) ([]database.Document, error) {
+func (m *MockDatabaseClient) GetAll(ctx context.Context, collectionPath string, opts *database.GetAllOptions) ([]database.Document, error) {
 	if m.lastError != nil {
 		return nil, m.lastError
 	}
@@ -45,6 +45,19 @@ func (m *MockDatabaseClient) GetAll(ctx context.Context, collectionPath string) 
 	if collection, ok := m.data[collectionPath]; ok {
 		for _, doc := range collection {
 			results = append(results, doc)
+		}
+	}
+	// Apply basic pagination semantics so existing tests keep passing
+	// regardless of the new optional opts parameter.
+	if opts != nil {
+		if opts.Offset > 0 {
+			if opts.Offset >= len(results) {
+				return []database.Document{}, nil
+			}
+			results = results[opts.Offset:]
+		}
+		if opts.Limit > 0 && opts.Limit < len(results) {
+			results = results[:opts.Limit]
 		}
 	}
 	return results, nil
@@ -143,7 +156,7 @@ func TestMockDatabaseClient_CRUD(t *testing.T) {
 		// Add another document
 		mockDB.Create(ctx, collectionPath, "mock-id-2", database.Document{"name": "Bob", "age": 25})
 
-		docs, err := mockDB.GetAll(ctx, collectionPath)
+		docs, err := mockDB.GetAll(ctx, collectionPath, nil)
 		if err != nil {
 			t.Fatalf("GetAll failed: %v", err)
 		}
@@ -184,7 +197,7 @@ func TestMockDatabaseClient_CRUD(t *testing.T) {
 			t.Error("Get after delete should fail")
 		}
 		// Verify only 1 document remains
-		docs, err := mockDB.GetAll(ctx, collectionPath)
+		docs, err := mockDB.GetAll(ctx, collectionPath, nil)
 		if err != nil {
 			t.Fatalf("GetAll after delete failed: %v", err)
 		}
@@ -209,7 +222,7 @@ func TestMockDatabaseClient_Errors(t *testing.T) {
 	})
 
 	t.Run("GetAll with error", func(t *testing.T) {
-		_, err := mockDB.GetAll(ctx, collectionPath)
+		_, err := mockDB.GetAll(ctx, collectionPath, nil)
 		if err == nil {
 			t.Error("GetAll should return error")
 		}
@@ -251,7 +264,7 @@ func TestMockDatabaseClient_NotFound(t *testing.T) {
 	})
 
 	t.Run("GetAll from empty collection", func(t *testing.T) {
-		docs, err := mockDB.GetAll(ctx, collectionPath)
+		docs, err := mockDB.GetAll(ctx, collectionPath, nil)
 		if err != nil {
 			t.Fatalf("GetAll failed: %v", err)
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -56,6 +57,51 @@ func (h *SandboxHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Pagination defaults and hard caps for the GET-collection endpoint.
+// We cap limit to keep response bodies under Firestore's 1 MiB query limit
+// (and to keep a single request cheap). Callers can ask for more by
+// paginating with offset; we also surface a "nextOffset" hint so the UI
+// can implement infinite scroll.
+const (
+	defaultPageSize = 25
+	maxPageSize     = 100
+)
+
+// parseGetAllOptions extracts pagination parameters from the request.
+// Returns a default options struct when no params are present.
+func parseGetAllOptions(r *http.Request) *database.GetAllOptions {
+	opts := &database.GetAllOptions{Limit: defaultPageSize}
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			opts.Limit = n
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
+			opts.Offset = n
+		}
+	}
+	if opts.Limit > maxPageSize {
+		opts.Limit = maxPageSize
+	}
+	return opts
+}
+
+// isQuotaError reports whether the underlying error from a database adapter
+// is a Firestore "quota exceeded" / "resource exhausted" failure. We surface
+// these as 503 so the UI can show a friendly retry message instead of a
+// raw gRPC stack trace.
+func isQuotaError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "ResourceExhausted") ||
+		strings.Contains(msg, "Quota exceeded") ||
+		strings.Contains(msg, "RESOURCE_EXHAUSTED") ||
+		strings.Contains(msg, "quota_exceeded")
+}
+
 func (h *SandboxHandler) handleGet(w http.ResponseWriter, r *http.Request, collectionPath string, id string) {
 	ctx := r.Context()
 
@@ -65,6 +111,10 @@ func (h *SandboxHandler) handleGet(w http.ResponseWriter, r *http.Request, colle
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				http.Error(w, "Document not found", http.StatusNotFound)
+				return
+			}
+			if isQuotaError(err) {
+				http.Error(w, "Upstream quota exceeded. Please retry shortly.", http.StatusServiceUnavailable)
 				return
 			}
 			http.Error(w, fmt.Sprintf("Failed to get document: %v", err), http.StatusInternalServerError)
@@ -79,18 +129,36 @@ func (h *SandboxHandler) handleGet(w http.ResponseWriter, r *http.Request, colle
 		return
 	}
 
-	// Get all documents in collection
-	docs, err := h.client.GetAll(ctx, collectionPath)
+	// Get documents in collection (with optional pagination)
+	opts := parseGetAllOptions(r)
+	docs, err := h.client.GetAll(ctx, collectionPath, opts)
 	if err != nil {
+		if isQuotaError(err) {
+			http.Error(w,
+				"Upstream quota exceeded. Try a smaller ?limit= or retry shortly.",
+				http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to get documents: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	if docs == nil {
 		docs = []database.Document{}
 	}
-	if err := json.NewEncoder(w).Encode(docs); err != nil {
+
+	// Wrap response with pagination metadata so the UI can request more.
+	nextOffset := opts.Offset + len(docs)
+	resp := map[string]interface{}{
+		"data":       docs,
+		"limit":      opts.Limit,
+		"offset":     opts.Offset,
+		"count":      len(docs),
+		"nextOffset": nextOffset,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}

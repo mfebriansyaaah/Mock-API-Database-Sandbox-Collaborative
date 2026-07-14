@@ -77,10 +77,26 @@ func (a *FirestoreAdapter) Get(ctx context.Context, collectionPath string, id st
 	return docSnap.Data(), nil
 }
 
-// GetAll retrieves all documents from the specified collection
-func (a *FirestoreAdapter) GetAll(ctx context.Context, collectionPath string) ([]Document, error) {
+// GetAll retrieves documents from the specified collection.
+// Supports optional pagination via opts (Limit / Offset).
+// We iterate manually so that a hard cap (Limit) is enforced even on backends
+// that don't natively support LIMIT in their iterator (Firestore is one of
+// them — its .Documents(ctx) call has a 1 MiB response cap that surfaces as
+// "rpc error: code = ResourceExhausted desc = Quota exceeded.").
+func (a *FirestoreAdapter) GetAll(ctx context.Context, collectionPath string, opts *GetAllOptions) ([]Document, error) {
 	iter := a.client.Collection(collectionPath).Documents(ctx)
 	var results []Document
+
+	// Skip the first `Offset` documents that come back. Firestore's query
+	// language does not support OFFSET directly, so we drop them client-side.
+	skipped := 0
+	if opts != nil && opts.Offset > 0 {
+		skipped = opts.Offset
+	}
+	limit := -1
+	if opts != nil && opts.Limit > 0 {
+		limit = opts.Limit
+	}
 
 	for {
 		doc, err := iter.Next()
@@ -94,9 +110,16 @@ func (a *FirestoreAdapter) GetAll(ctx context.Context, collectionPath string) ([
 			}
 			return nil, fmt.Errorf("failed to iterate documents: %v", err)
 		}
+		if skipped > 0 {
+			skipped--
+			continue
+		}
 		data := doc.Data()
 		data["id"] = doc.Ref.ID
 		results = append(results, data)
+		if limit > 0 && len(results) >= limit {
+			break
+		}
 	}
 
 	return results, nil

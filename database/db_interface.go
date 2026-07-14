@@ -23,6 +23,17 @@ const (
 // Document represents a generic document/row in the database
 type Document map[string]interface{}
 
+// GetAllOptions configures pagination and limits for GetAll.
+// A nil pointer or zero-value struct means "no limit, no offset" (legacy
+// behaviour). Adapters should treat Limit <= 0 as "fetch everything" and
+// return an error if the backend's hard response-size limit is hit.
+type GetAllOptions struct {
+	// Limit is the maximum number of documents to return. <= 0 means no limit.
+	Limit int
+	// Offset is the number of documents to skip before returning results. >= 0.
+	Offset int
+}
+
 // QueryResult represents the result of a query operation
 type QueryResult struct {
 	Documents []Document
@@ -38,8 +49,10 @@ type DatabaseClient interface {
 	// Get retrieves a single document by ID from the specified collection/table
 	Get(ctx context.Context, collectionPath string, id string) (Document, error)
 
-	// GetAll retrieves all documents from the specified collection/table
-	GetAll(ctx context.Context, collectionPath string) ([]Document, error)
+	// GetAll retrieves documents from the specified collection/table.
+	// Pass nil for opts to fetch everything (legacy behaviour). Pass a
+	// *GetAllOptions{Limit, Offset} to paginate.
+	GetAll(ctx context.Context, collectionPath string, opts *GetAllOptions) ([]Document, error)
 
 	// Create creates a new document in the specified collection/table
 	// If id is empty, the database should generate a new ID

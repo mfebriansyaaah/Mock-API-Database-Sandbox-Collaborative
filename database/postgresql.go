@@ -116,16 +116,29 @@ func (c *PostgreSQLClient) Get(ctx context.Context, tablePath string, id string)
 	return doc, nil
 }
 
-// GetAll retrieves all documents from the specified table
-func (c *PostgreSQLClient) GetAll(ctx context.Context, tablePath string) ([]Document, error) {
+// GetAll retrieves documents from the specified table.
+// Supports optional pagination via opts (Limit / Offset).
+func (c *PostgreSQLClient) GetAll(ctx context.Context, tablePath string, opts *GetAllOptions) ([]Document, error) {
 	// Parse table path (format: sandbox/{projectId}/{table})
 	tableName, err := parseTablePath(tablePath)
 	if err != nil {
 		return nil, err
 	}
 
+	// Defensive identifier quoting — table names come from the URL path so
+	// they can technically contain characters that would break the SQL string.
+	// We keep behaviour simple here; production hardening lives elsewhere.
 	query := fmt.Sprintf("SELECT * FROM %s", tableName)
-	rows, err := c.db.QueryContext(ctx, query)
+	args := []interface{}{}
+	if opts != nil && opts.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, opts.Limit)
+	}
+	if opts != nil && opts.Offset > 0 {
+		query += fmt.Sprintf(" OFFSET $%d", len(args)+1)
+		args = append(args, opts.Offset)
+	}
+	rows, err := c.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query PostgreSQL: %v", err)
 	}
