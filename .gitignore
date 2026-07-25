@@ -5,11 +5,18 @@
 private-key.json
 *-private-key.json
 *service-account*.json
+*Service_Account*.json
 *firebase-adminsdk*.json
+# Actual committed secret (rotate this key NOW if it was ever pushed)
+Service_Account_Key.json
 # Local .env with real secrets — DO NOT commit. Use .env.example as template.
 /.env
 .env.local
 .env.*.local
+# Broader .env coverage (non-.local variants)
+.env.development
+.env.production
+.env.staging
 # Generic secrets
 *.pem
 *.key
@@ -22,6 +29,7 @@ private-key.json
 # Compiled binaries
 /server.exe
 /server
+/server-linux-amd64
 /server.out
 /server.err
 /server.exe~
@@ -75,6 +83,11 @@ go.work.sum
 Makefile.local
 # Internal project planning / spec notes
 spec-notes.txt
+
+# =========================================================
+# Dependencies (web-ui)
+# =========================================================
+node_modules/
 
 # =========================================================
 # OS files
