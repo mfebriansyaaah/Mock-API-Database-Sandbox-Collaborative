@@ -1,6 +1,16 @@
-SHELL  := powershell.exe
-.SHELLFLAGS := -NoProfile -NonInteractive -Command
-BIN    := Mock-API-Database-Sandbox-Collaborative.exe
+# Detect OS for platform-specific variables.
+ifeq ($(OS),Windows_NT)
+  BIN      := Mock-API-Database-Sandbox-Collaborative.exe
+  RM       := del /f /q
+  NULLDEV  := nul
+  ECHO     := echo
+else
+  BIN      := Mock-API-Database-Sandbox-Collaborative
+  RM       := rm -f
+  NULLDEV  := /dev/null
+  ECHO     := echo
+endif
+
 PKG    := ./...
 PORT   := 8080
 CRED   := Service_Account_Key.json
@@ -14,7 +24,7 @@ LDFLAGS  := -s -w
 help:
 	@echo "Available targets:"
 	@echo "  make tidy        - go mod tidy"
-	@echo "  make build       - build binary to $(BIN)"
+	@echo "  make build       - build binary ($(BIN))"
 	@echo "  make build-linux - cross-compile for linux/amd64"
 	@echo "  make run         - run from source"
 	@echo "  make test        - run unit tests"
@@ -27,10 +37,10 @@ tidy:
 	go mod tidy
 
 build: tidy
-	$$env:CGO_ENABLED='0'; $$env:APP_ENV='production'; go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN) .
+	CGO_ENABLED=0 APP_ENV=production go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN) .
 
 build-linux: tidy
-	$$env:CGO_ENABLED='0'; $$env:APP_ENV='production'; $$env:GOOS='linux'; $$env:GOARCH='amd64'; go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o server-linux-amd64 .
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 APP_ENV=production go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o server-linux-amd64 .
 
 run: tidy
 	go run . -credentials $(CRED)
@@ -45,9 +55,19 @@ fmt:
 	gofmt -w .
 
 clean:
-	Remove-Item -Force -ErrorAction SilentlyContinue $(BIN); Remove-Item -Force -ErrorAction SilentlyContinue server-linux-amd64; Remove-Item -Force -ErrorAction SilentlyContinue server.out; Remove-Item -Force -ErrorAction SilentlyContinue server.err; echo "cleaned"
+	$(RM) $(BIN) server-linux-amd64 server.out server.err 2>$(NULLDEV)
+	@$(ECHO) "cleaned"
 
 smoke: build
-	$$proc = Start-Process -NoNewWindow -PassThru -FilePath ".\$(BIN)" -ArgumentList "-credentials","$(CRED)"; Start-Sleep -Seconds 2; \
-	try { $$code = (Invoke-WebRequest -Uri "http://localhost:$(PORT)/hello" -UseBasicParsing -TimeoutSec 5).StatusCode; echo "SMOKE: PASS (status=$$code)" } catch { echo "SMOKE: FAILED — see output"; $$proc.Kill(); exit 1 }; \
-	$$proc.Kill()
+	@echo "Starting $(BIN)..."
+	@./$(BIN) -credentials $(CRED) & \
+	  PID=$$!; \
+	  sleep 2; \
+	  STATUS=$$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$(PORT)/hello 2>/dev/null || echo "000"); \
+	  kill $$PID 2>/dev/null; \
+	  if [ "$$STATUS" = "200" ]; then \
+	    echo "SMOKE: PASS (status=$$STATUS)"; \
+	  else \
+	    echo "SMOKE: FAILED (status=$$STATUS)"; \
+	    exit 1; \
+	  fi
