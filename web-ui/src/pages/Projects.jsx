@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { FolderTree, Plus, Database, Trash2, ArrowUpRight } from 'lucide-react'
+import { FolderTree, Plus, Database, Trash2, ArrowUpRight, Loader2 } from 'lucide-react'
 import { Card } from '@/components/ui/Card.jsx'
 import Button from '@/components/ui/Button.jsx'
 import Dialog from '@/components/ui/Dialog.jsx'
@@ -9,8 +9,10 @@ import { useProjectsStore } from '@/stores/useProjectsStore.js'
 import { useToast } from '@/components/ui/Toast.jsx'
 import { formatRelative, slugify } from '@/utils/format.js'
 import { cn } from '@/utils/cn.js'
+import { useApi } from '@/api/client.js'
 
 export default function Projects() {
+  const api = useApi()
   const knownProjects = useProjectsStore((s) => s.knownProjects)
   const knownTables = useProjectsStore((s) => s.knownTables)
   const addProject = useProjectsStore((s) => s.addProject)
@@ -20,6 +22,7 @@ export default function Projects() {
   const [createOpen, setCreateOpen] = useState(false)
   const [newId, setNewId] = useState('')
   const [pendingDelete, setPendingDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   function handleCreate(e) {
     e?.preventDefault?.()
@@ -38,11 +41,20 @@ export default function Projects() {
     setCreateOpen(false)
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (!pendingDelete) return
-    removeProject(pendingDelete)
-    toast.success(`Project "${pendingDelete}" removed from tracking`)
-    setPendingDelete(null)
+    setDeleting(true)
+    try {
+      await api.delete(`/__api/projects/${pendingDelete}`)
+      removeProject(pendingDelete)
+      toast.success(`Project "${pendingDelete}" and all backend data deleted`)
+      setPendingDelete(null)
+    } catch (e) {
+      const msg = e.normalizedMessage || e.message || 'Unknown error'
+      toast.error(`Failed to delete project data: ${msg}`)
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -88,7 +100,7 @@ export default function Projects() {
                 key={p.id}
                 className="group relative overflow-hidden transition hover:-translate-y-0.5 hover:border-brand-500/60 hover:shadow-glow"
               >
-                <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-brand-500/5 blur-2xl transition group-hover:bg-brand-500/15" />
+                <div className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-brand-500/5 blur-2xl transition group-hover:bg-brand-500/15" />
                 <div className="p-5">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
@@ -151,8 +163,8 @@ export default function Projects() {
 
       <div className="panel-muted p-4 text-xs text-ink-500">
         <Database className="mr-1 inline h-3.5 w-3.5" />
-        Projects tracked here are stored in your browser only. The backend auto-creates a
-        collection on the first write to{' '}
+        Projects tracked here are synced with the backend. Deleting a project will also
+        remove all its tables, documents, and API keys from the backend.{' '}
         <code className="font-mono">/sandbox/{'{projectId}'}/{'{table}'}</code>.
       </div>
 
@@ -181,20 +193,31 @@ export default function Projects() {
 
       <Dialog
         open={Boolean(pendingDelete)}
-        onClose={() => setPendingDelete(null)}
-        title="Remove project?"
-        description="This only removes the project from your tracking. The backend data is unaffected."
+        onClose={() => {
+          if (!deleting) setPendingDelete(null)
+        }}
+        title="Delete project?"
+        description="All backend data (tables, documents, API keys) will be permanently deleted. This cannot be undone."
         onConfirm={handleDelete}
-        confirmLabel="Remove"
+        confirmLabel={deleting ? 'Deleting…' : 'Delete everything'}
         destructive
+        disabled={deleting}
       >
-        <p className="text-sm text-ink-600 dark:text-ink-300">
-          Continue removing{' '}
-          <code className="rounded bg-ink-100 px-1.5 py-0.5 font-mono text-xs dark:bg-ink-800">
-            {pendingDelete}
-          </code>
-          ?
-        </p>
+        <div className="space-y-3">
+          <p className="text-sm text-ink-600 dark:text-ink-300">
+            Continue deleting{' '}
+            <code className="rounded bg-ink-100 px-1.5 py-0.5 font-mono text-xs dark:bg-ink-800">
+              {pendingDelete}
+            </code>
+            {' '}and all its data?
+          </p>
+          {deleting && (
+            <div className="flex items-center gap-2 text-sm text-ink-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Deleting backend data…
+            </div>
+          )}
+        </div>
       </Dialog>
     </div>
   )

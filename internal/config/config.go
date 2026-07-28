@@ -16,6 +16,7 @@ import (
 type Config struct {
 	Port      string
 	ProjectID string
+	AppEnv    string // "development" or "production"
 
 	// Database configuration
 	Database DatabaseConfig
@@ -23,6 +24,12 @@ type Config struct {
 	// Logger
 	Logger LoggerConfig
 }
+
+// IsDevelopment returns true when AppEnv is "development" (the default).
+func (c *Config) IsDevelopment() bool { return c.AppEnv == "development" }
+
+// IsProduction returns true when AppEnv is "production".
+func (c *Config) IsProduction() bool { return c.AppEnv == "production" }
 
 // DatabaseConfig holds configuration for the database
 type DatabaseConfig struct {
@@ -62,6 +69,7 @@ const (
 	EnvPort                 = "PORT"
 	EnvProjectID            = "GOOGLE_CLOUD_PROJECT"
 	EnvCredentialsFile      = "GOOGLE_APPLICATION_CREDENTIALS"
+	EnvAppEnv               = "APP_ENV"
 	EnvLogChannelBuffer     = "LOG_CHANNEL_BUFFER"
 	EnvLogNumWorkers        = "LOG_NUM_WORKERS"
 	EnvLogCleanupInterval   = "LOG_CLEANUP_INTERVAL"
@@ -94,6 +102,7 @@ const (
 	defaultLogCleanupInterval   = 5 * time.Minute
 	defaultLogMaxLogsPerProject = 100
 	defaultDatabaseType         = "firestore"
+	defaultAppEnv               = "development"
 )
 
 // Load reads `.env` (if present) into the process env, then constructs a
@@ -107,6 +116,7 @@ func Load() Config {
 	cfg := Config{
 		Port:      getString(EnvPort, defaultPort),
 		ProjectID: getString(EnvProjectID, "mockapi-sandbox-dev"),
+		AppEnv:    getString(EnvAppEnv, defaultAppEnv),
 		Database: DatabaseConfig{
 			Type:                     getString(EnvDatabaseType, defaultDatabaseType),
 			FirestoreProjectID:       getString(EnvFirestoreProjectID, ""),

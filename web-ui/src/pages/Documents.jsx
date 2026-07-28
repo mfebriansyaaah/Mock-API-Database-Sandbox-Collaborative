@@ -9,7 +9,8 @@ import {
   RefreshCcw,
   ChevronLeft,
   ChevronRight,
-  FileJson
+  FileJson,
+  Link as LinkIcon
 } from 'lucide-react'
 import Card, { CardHeader, CardTitle, CardBody } from '@/components/ui/Card.jsx'
 import Button from '@/components/ui/Button.jsx'
@@ -18,6 +19,7 @@ import SearchInput from '@/components/data/SearchInput.jsx'
 import Drawer from '@/components/ui/Drawer.jsx'
 import JsonEditor from '@/components/data/JsonEditor.jsx'
 import Dialog from '@/components/ui/Dialog.jsx'
+import EndpointLink from '@/components/ui/EndpointLink.jsx'
 import { useApi } from '@/api/client.js'
 import { useToast } from '@/components/ui/Toast.jsx'
 import { useProjectsStore } from '@/stores/useProjectsStore.js'
@@ -70,6 +72,7 @@ export default function Documents() {
   const [editorState, setEditorState] = useState({ open: false, mode: 'create', id: null, body: '{}' })
   const [pendingDelete, setPendingDelete] = useState(null)
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false)
+  const [endpointOpen, setEndpointOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -262,6 +265,10 @@ export default function Documents() {
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={refresh} title="Reload">
             <RefreshCcw className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" onClick={() => setEndpointOpen(true)} title="Get endpoint link">
+            <LinkIcon className="h-4 w-4" />
+            Endpoint
           </Button>
           {selected.size > 0 && (
             <Button
@@ -541,6 +548,13 @@ export default function Documents() {
           from <code className="font-mono">{table}</code>. Continue?
         </p>
       </Dialog>
+
+      <EndpointLink
+        open={endpointOpen}
+        onClose={() => setEndpointOpen(false)}
+        projectId={projectId}
+        table={table}
+      />
     </div>
   )
 }

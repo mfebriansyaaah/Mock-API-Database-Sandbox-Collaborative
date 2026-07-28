@@ -8,7 +8,9 @@ import {
   ArrowUpRight,
   Plus,
   Terminal,
-  PlayCircle
+  PlayCircle,
+  Key,
+  Settings
 } from 'lucide-react'
 import StatCard from '@/components/stats/StatCard.jsx'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card.jsx'
@@ -44,6 +46,24 @@ export default function Overview() {
     async function load() {
       setLoading(true)
       const projectIds = knownProjects.map((p) => p.id)
+
+      // Auto-sync: discover tables from backend for each project.
+      // Falls back to existing localStorage data if the backend is unreachable.
+      for (const pid of projectIds) {
+        if (!alive || myReq !== requestSeq) return
+        try {
+          const res = await api.get('/__api/tables', { params: { projectId: pid } })
+          if (!alive || myReq !== requestSeq) return
+          const tables = Array.isArray(res.data?.tables) ? res.data.tables : []
+          const store = useProjectsStore.getState()
+          for (const name of tables) {
+            store.addTable(pid, name)
+          }
+        } catch (e) {
+          // Backend unreachable — keep local data as-is
+        }
+      }
+
       // Build a stable list from the signature (not the live store object).
       const tablePairs = tablesSignature
         ? tablesSignature.split('|').map((s) => {
@@ -61,7 +81,8 @@ export default function Overview() {
           const res = await api.get(`/sandbox/${pid}/${tname}`)
           if (!alive || myReq !== requestSeq) return
           const lat = performance.now() - t0
-          const list = Array.isArray(res.data) ? res.data : []
+          // Backend returns paginated envelope { data: [...], limit, offset, count }
+          const list = Array.isArray(res.data?.data) ? res.data.data : Array.isArray(res.data) ? res.data : []
           counts.documents += list.length
           recentRequests.push({
             id: `${pid}/${tname}`,
@@ -167,7 +188,7 @@ export default function Overview() {
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Recent activity</CardTitle>
-            <span className="text-xs text-ink-500">last 8 requests</span>
+            <span className="text-xs text-ink-500">last {recent.length} request{recent.length !== 1 ? 's' : ''}</span>
           </CardHeader>
           <CardBody className="p-0">
             {loading ? (
@@ -236,14 +257,14 @@ export default function Overview() {
               hint="Try a custom endpoint"
             />
             <QuickAction
-              to="/logs"
-              icon={Activity}
-              label="Inspect access logs"
-              hint="See traffic in real time"
+              to="/api-keys"
+              icon={Key}
+              label="API Keys"
+              hint="Manage access keys"
             />
             <QuickAction
               to="/settings"
-              icon={ArrowUpRight}
+              icon={Settings}
               label="Configure backend"
               hint="Base URL & preferences"
             />

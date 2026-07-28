@@ -18,6 +18,14 @@ function loadInitial() {
   })
 }
 
+/** Persist only data — never spread `get()` which includes store methods. */
+function persist(state) {
+  storage.set(STORAGE_KEY, {
+    knownProjects: state.knownProjects,
+    knownTables: state.knownTables
+  })
+}
+
 export const useProjectsStore = create((set, get) => ({
   ...loadInitial(),
   addProject: (id) => {
@@ -28,21 +36,21 @@ export const useProjectsStore = create((set, get) => ({
       { id, createdAt: Date.now(), lastAccessedAt: Date.now() }
     ]
     set({ knownProjects: next })
-    storage.set(STORAGE_KEY, { ...get() })
+    persist(get())
   },
   removeProject: (id) => {
     const next = get().knownProjects.filter((p) => p.id !== id)
     const tables = { ...get().knownTables }
     delete tables[id]
     set({ knownProjects: next, knownTables: tables })
-    storage.set(STORAGE_KEY, { ...get() })
+    persist(get())
   },
   touchProject: (id) => {
     const next = get().knownProjects.map((p) =>
       p.id === id ? { ...p, lastAccessedAt: Date.now() } : p
     )
     set({ knownProjects: next })
-    storage.set(STORAGE_KEY, { ...get() })
+    persist(get())
   },
   addTable: (projectId, name) => {
     const tables = { ...get().knownTables }
@@ -59,7 +67,7 @@ export const useProjectsStore = create((set, get) => ({
       ]
     }
     set({ knownTables: tables })
-    storage.set(STORAGE_KEY, { ...get() })
+    persist(get())
   },
   setTableDocCount: (projectId, name, docCount) => {
     const tables = { ...get().knownTables }
@@ -68,12 +76,12 @@ export const useProjectsStore = create((set, get) => ({
       t.name === name ? { ...t, docCount, lastAccessedAt: Date.now() } : t
     )
     set({ knownTables: tables })
-    storage.set(STORAGE_KEY, { ...get() })
+    persist(get())
   },
   removeTable: (projectId, name) => {
     const tables = { ...get().knownTables }
     tables[projectId] = (tables[projectId] || []).filter((t) => t.name !== name)
     set({ knownTables: tables })
-    storage.set(STORAGE_KEY, { ...get() })
+    persist(get())
   }
 }))

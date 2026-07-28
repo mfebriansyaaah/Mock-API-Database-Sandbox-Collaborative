@@ -1,17 +1,20 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Database, Plus, FileText, Trash2, ArrowUpRight } from 'lucide-react'
+import { ArrowLeft, Database, Plus, FileText, Trash2, ArrowUpRight, Link as LinkIcon } from 'lucide-react'
 import Card, { CardHeader, CardTitle, CardBody } from '@/components/ui/Card.jsx'
 import Button from '@/components/ui/Button.jsx'
 import Input from '@/components/ui/Input.jsx'
 import Dialog from '@/components/ui/Dialog.jsx'
 import Skeleton from '@/components/ui/Skeleton.jsx'
 import SearchInput from '@/components/data/SearchInput.jsx'
+import EndpointLink from '@/components/ui/EndpointLink.jsx'
 import { useToast } from '@/components/ui/Toast.jsx'
 import { useApi } from '@/api/client.js'
 import { useProjectsStore } from '@/stores/useProjectsStore.js'
 import { formatRelative } from '@/utils/format.js'
 import { slugify } from '@/utils/format.js'
+
+const EMPTY_TABLES = []
 
 export default function Tables() {
   const { projectId } = useParams()
@@ -19,7 +22,7 @@ export default function Tables() {
   const api = useApi()
   const toast = useToast()
 
-  const knownTables = useProjectsStore((s) => s.knownTables[projectId] || [])
+  const knownTables = useProjectsStore((s) => s.knownTables[projectId] ?? EMPTY_TABLES)
   const addTable = useProjectsStore((s) => s.addTable)
   const touchProject = useProjectsStore((s) => s.touchProject)
   const setTableDocCount = useProjectsStore((s) => s.setTableDocCount)
@@ -30,6 +33,7 @@ export default function Tables() {
   const [loading, setLoading] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
+  const [endpointTable, setEndpointTable] = useState(null)
 
   useEffect(() => {
     touchProject(projectId)
@@ -43,10 +47,9 @@ export default function Tables() {
       await Promise.all(
         knownTables.map(async (t) => {
           try {
-            const r = await api.get(`/sandbox/${projectId}/${t.name}`)
-            const list = Array.isArray(r.data) ? r.data : []
-            next[t.name] = list.length
-            setTableDocCount(projectId, t.name, list.length)
+            const r = await api.get(`/sandbox/${projectId}/${t.name}/_count`)
+            next[t.name] = typeof r.data?.count === 'number' ? r.data.count : 0
+            setTableDocCount(projectId, t.name, next[t.name])
           } catch (e) {
             next[t.name] = 0
           }
@@ -160,6 +163,14 @@ export default function Tables() {
                     <td className="text-right">
                       <div className="inline-flex items-center gap-1">
                         <button
+                          onClick={() => setEndpointTable(t.name)}
+                          className="rounded p-1.5 text-ink-400 transition hover:bg-brand-500/10 hover:text-brand-500"
+                          title="Get endpoint link"
+                          aria-label="Endpoint link"
+                        >
+                          <LinkIcon className="h-3.5 w-3.5" />
+                        </button>
+                        <button
                           onClick={() => removeTable(projectId, t.name)}
                           className="rounded p-1.5 text-ink-400 transition hover:bg-rose-500/10 hover:text-rose-500"
                           aria-label="Untrack"
@@ -210,6 +221,13 @@ export default function Tables() {
           </p>
         </form>
       </Dialog>
+
+      <EndpointLink
+        open={Boolean(endpointTable)}
+        onClose={() => setEndpointTable(null)}
+        projectId={projectId}
+        table={endpointTable || ''}
+      />
     </div>
   )
 }

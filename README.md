@@ -59,36 +59,42 @@ Data submitted to the sandbox is actually persisted in your chosen database, so 
 ├── .env.example               # Copy to .env (gitignored) and fill in real values
 ├── .gitignore
 │
-├── config/                    # Env loading & defaults
-│   ├── config.go
-│   └── config_test.go
-│
-├── database/                  # Database abstraction layer
-│   ├── db_interface.go        # DatabaseClient interface, GetAllOptions, factory
-│   ├── firestore_adapter.go   # Firestore implementation (active adapter)
-│   ├── firebase.go            # Legacy Firebase Admin SDK wrapper
-│   ├── postgresql.go          # PostgreSQL implementation
-│   ├── mysql.go               # MySQL implementation
-│   ├── utils.go               # Table path parsing utilities
-│   └── database_test.go
-│
-├── logger/                    # Async access-logger package
-│   ├── entry.go               # LogEntry struct + Submitter interface
-│   ├── config.go              # LoggerConfig + defaults
-│   ├── logger.go              # Logger core, NewLogger, Submit, Close
-│   ├── worker.go              # Worker pool & write path
-│   ├── cleanup.go             # FIFO cleanup ticker
-│   ├── batch.go               # Batched Firestore deletes
-│   ├── config_test.go
-│   └── logger_test.go
-│
-├── middleware/                # HTTP middlewares
-│   ├── logging.go             # Logging(Submitter) -> http.Handler middleware
-│   └── logging_test.go
-│
-├── sandbox/                   # Dynamic mock-API handler
-│   ├── handler.go             # CRUD handler for /sandbox/{projectId}/{table}/{id}
-│   └── sandbox_test.go
+├── internal/                  # Private application packages (not importable externally)
+│   │
+│   ├── config/                # Env loading & defaults
+│   │   ├── config.go
+│   │   └── config_test.go
+│   │
+│   ├── database/              # Database abstraction layer
+│   │   ├── db_interface.go    # DatabaseClient interface, GetAllOptions, factory
+│   │   ├── firestore_adapter.go # Firestore implementation (active adapter)
+│   │   ├── postgresql.go      # PostgreSQL implementation
+│   │   ├── mysql.go           # MySQL implementation
+│   │   ├── utils.go           # Table path parsing utilities
+│   │   └── database_test.go
+│   │
+│   ├── logger/                # Async access-logger package
+│   │   ├── entry.go           # LogEntry struct + Submitter interface
+│   │   ├── config.go          # LoggerConfig + defaults
+│   │   ├── logger.go          # Logger core, NewLogger, Submit, Close
+│   │   ├── worker.go          # Worker pool & write path
+│   │   ├── cleanup.go         # FIFO cleanup ticker
+│   │   ├── batch.go           # Batched Firestore deletes
+│   │   ├── config_test.go
+│   │   └── logger_test.go
+│   │
+│   ├── middleware/            # HTTP middlewares
+│   │   ├── logging.go         # Logging(Submitter) -> http.Handler middleware
+│   │   ├── cors.go            # CORS middleware
+│   │   ├── apikey.go          # API key auth middleware
+│   │   └── logging_test.go
+│   │
+│   ├── sandbox/               # Dynamic mock-API handler
+│   │   ├── handler.go         # CRUD handler for /sandbox/{projectId}/{table}/{id}
+│   │   └── sandbox_test.go
+│   │
+│   └── apikey/                # API key management
+│       └── keys.go
 │
 └── web-ui/                    # Vite + React 18 admin console (JS, Tailwind)
     ├── README.md              # Frontend-specific docs
@@ -286,16 +292,16 @@ The project ships with unit tests for all packages that have meaningful in-proce
 
 | Package      | Coverage                           | What's tested                                                                                                                       |
 | ------------ | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `config`     | `config_test.go`                   | Default values, env override, invalid-fallback semantics                                                                            |
-| `database`   | `database_test.go`                 | Interface compliance, factory function, table path parsing                                                                          |
-| `logger`     | `config_test.go`, `logger_test.go` | Config defaults, non-blocking submit, nil-drop, project tracking (thread-safe), close idempotency                                   |
-| `middleware` | `logging_test.go`                  | Method/path/projectID recording, status propagation, latency/timestamp, drop on full channel, entry on panic, one-entry-per-request |
-| `sandbox`    | `sandbox_test.go`                  | CRUD operations, error handling, not-found scenarios                                                                                |
+| `internal/config`     | `config_test.go`                   | Default values, env override, invalid-fallback semantics                                                                            |
+| `internal/database`   | `database_test.go`                 | Interface compliance, factory function, table path parsing                                                                          |
+| `internal/logger`     | `config_test.go`, `logger_test.go` | Config defaults, non-blocking submit, nil-drop, project tracking (thread-safe), close idempotency                                   |
+| `internal/middleware` | `logging_test.go`                  | Method/path/projectID recording, status propagation, latency/timestamp, drop on full channel, entry on panic, one-entry-per-request |
+| `internal/sandbox`    | `sandbox_test.go`                  | CRUD operations, error handling, not-found scenarios                                                                                |
 
-`database/firebase.go` is a thin wrapper around the Firebase Admin SDK and is
-intentionally not unit-tested, it is exercised end-to-end against a real
-Firestore instance or the emulator. `sandbox/handler.go` is covered indirectly
-by `sandbox/sandbox_test.go` (via the `MockDatabaseClient`), its thin HTTP
+`internal/database/firestore_adapter.go` exercises Firebase/Firestore
+end-to-end against a real Firestore instance or the emulator.
+`internal/sandbox/handler.go` is covered indirectly by
+`internal/sandbox/sandbox_test.go` (via the `MockDatabaseClient`); its thin HTTP
 plumbing is the only piece not asserted at the unit level.
 
 ```bash

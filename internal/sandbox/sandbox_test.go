@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/database"
+	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/internal/database"
 )
 
 // MockDatabaseClient is a mock implementation of DatabaseClient for testing

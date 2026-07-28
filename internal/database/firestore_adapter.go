@@ -11,6 +11,7 @@ import (
 
 	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
@@ -39,12 +40,12 @@ func NewFirestoreAdapter(ctx context.Context, config *FirestoreConfig) (*Firesto
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("error initializing Firebase app: %v", err)
+		return nil, fmt.Errorf("error initializing Firebase app: %w", err)
 	}
 
 	client, err := app.Firestore(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error getting Firestore client: %v", err)
+		return nil, fmt.Errorf("error getting Firestore client: %w", err)
 	}
 
 	return &FirestoreAdapter{
@@ -71,7 +72,7 @@ func (a *FirestoreAdapter) Get(ctx context.Context, collectionPath string, id st
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "NotFound") {
 			return nil, fmt.Errorf("document not found")
 		}
-		return nil, fmt.Errorf("failed to get document: %v", err)
+		return nil, fmt.Errorf("failed to get document: %w", err)
 	}
 
 	return docSnap.Data(), nil
@@ -108,7 +109,7 @@ func (a *FirestoreAdapter) GetAll(ctx context.Context, collectionPath string, op
 			if err.Error() == "no more items in iterator" {
 				break
 			}
-			return nil, fmt.Errorf("failed to iterate documents: %v", err)
+			return nil, fmt.Errorf("failed to iterate documents: %w", err)
 		}
 		if skipped > 0 {
 			skipped--
@@ -125,6 +126,28 @@ func (a *FirestoreAdapter) GetAll(ctx context.Context, collectionPath string, op
 	return results, nil
 }
 
+// CountAll returns the total number of documents in a Firestore collection.
+// Firestore does not have a native COUNT aggregate in the client SDK, so we
+// iterate through all documents and count them.
+func (a *FirestoreAdapter) CountAll(ctx context.Context, collectionPath string) (int64, error) {
+	iter := a.client.Collection(collectionPath).Documents(ctx)
+	var count int64
+	for {
+		_, err := iter.Next()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			if strings.Contains(err.Error(), "no more items in iterator") {
+				break
+			}
+			return 0, fmt.Errorf("failed to count documents: %w", err)
+		}
+		count++
+	}
+	return count, nil
+}
+
 // Create creates a new document in the specified collection
 func (a *FirestoreAdapter) Create(ctx context.Context, collectionPath string, id string, data Document) (string, error) {
 	// Use provided ID or generate new one
@@ -132,7 +155,7 @@ func (a *FirestoreAdapter) Create(ctx context.Context, collectionPath string, id
 		// Firestore will auto-generate ID if we use Add()
 		_, _, err := a.client.Collection(collectionPath).Add(ctx, data)
 		if err != nil {
-			return "", fmt.Errorf("failed to create document: %v", err)
+			return "", fmt.Errorf("failed to create document: %w", err)
 		}
 		// For Firestore, we need to get the generated ID
 		// This is a limitation - we'll return empty ID and let caller handle it
@@ -142,7 +165,7 @@ func (a *FirestoreAdapter) Create(ctx context.Context, collectionPath string, id
 	// Set document with specific ID
 	docRef := a.client.Doc(collectionPath + "/" + id)
 	if _, err := docRef.Set(ctx, data); err != nil {
-		return "", fmt.Errorf("failed to create document: %v", err)
+		return "", fmt.Errorf("failed to create document: %w", err)
 	}
 
 	return id, nil
@@ -157,7 +180,7 @@ func (a *FirestoreAdapter) Update(ctx context.Context, collectionPath string, id
 	docRef := a.client.Doc(collectionPath + "/" + id)
 	// Use MergeAll to update only the provided fields
 	if _, err := docRef.Set(ctx, data, firestore.MergeAll); err != nil {
-		return fmt.Errorf("failed to update document: %v", err)
+		return fmt.Errorf("failed to update document: %w", err)
 	}
 
 	return nil
@@ -171,7 +194,7 @@ func (a *FirestoreAdapter) Delete(ctx context.Context, collectionPath string, id
 
 	docRef := a.client.Doc(collectionPath + "/" + id)
 	if _, err := docRef.Delete(ctx); err != nil {
-		return fmt.Errorf("failed to delete document: %v", err)
+		return fmt.Errorf("failed to delete document: %w", err)
 	}
 
 	return nil
@@ -191,7 +214,108 @@ func (a *FirestoreAdapter) Ping(ctx context.Context) error {
 	_, err := a.client.Collection("__ping__").Doc("test").Get(ctx)
 	// We expect this to fail (collection doesn't exist), but it tests the connection
 	if err != nil && !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "NotFound") {
-		return fmt.Errorf("firestore ping failed: %v", err)
+		return fmt.Errorf("firestore ping failed: %w", err)
+	}
+	return nil
+}
+
+// ListCollections returns the names of all subcollections under the given
+// parent document path. For the sandbox this is used to discover tables
+// within a project (parentPath = "sandbox/{projectId}").
+func (a *FirestoreAdapter) ListCollections(ctx context.Context, parentPath string) ([]string, error) {
+	iter := a.client.Doc(parentPath).Collections(ctx)
+	var names []string
+	for {
+		collRef, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to list collections: %w", err)
+		}
+		names = append(names, collRef.ID)
+	}
+	return names, nil
+}
+
+// DeleteProject removes all data associated with a project: sandbox
+// collections/documents and API keys, then cleans up the parent documents.
+func (a *FirestoreAdapter) DeleteProject(ctx context.Context, projectId string) error {
+	// 1. Delete all sandbox collections under sandbox/{projectId}
+	sandboxPath := fmt.Sprintf("sandbox/%s", projectId)
+	sandboxColls, err := a.ListCollections(ctx, sandboxPath)
+	if err != nil {
+		// Document may not exist — that's fine
+		if !strings.Contains(err.Error(), "not found") &&
+			!strings.Contains(err.Error(), "NotFound") &&
+			!strings.Contains(err.Error(), "Document") {
+			return fmt.Errorf("failed to list sandbox collections: %w", err)
+		}
+	}
+	for _, coll := range sandboxColls {
+		if err := a.deleteCollection(ctx, fmt.Sprintf("%s/%s", sandboxPath, coll)); err != nil {
+			return fmt.Errorf("failed to delete collection %s/%s: %w", sandboxPath, coll, err)
+		}
+	}
+
+	// 2. Delete sandbox/{projectId} document
+	if _, err := a.client.Doc(sandboxPath).Delete(ctx); err != nil {
+		if !strings.Contains(err.Error(), "not found") &&
+			!strings.Contains(err.Error(), "NotFound") {
+			return fmt.Errorf("failed to delete sandbox document: %w", err)
+		}
+	}
+
+	// 3. Delete all API keys under _api_keys/{projectId}/keys
+	keysCollPath := fmt.Sprintf("_api_keys/%s/keys", projectId)
+	if err := a.deleteCollection(ctx, keysCollPath); err != nil {
+		return fmt.Errorf("failed to delete API keys: %w", err)
+	}
+
+	// 4. Delete _api_keys/{projectId} document
+	if _, err := a.client.Doc(fmt.Sprintf("_api_keys/%s", projectId)).Delete(ctx); err != nil {
+		if !strings.Contains(err.Error(), "not found") &&
+			!strings.Contains(err.Error(), "NotFound") {
+			return fmt.Errorf("failed to delete API keys document: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// deleteCollection recursively deletes every document in a Firestore
+// collection (including all sub-collections of each document).
+func (a *FirestoreAdapter) deleteCollection(ctx context.Context, collectionPath string) error {
+	iter := a.client.Collection(collectionPath).DocumentRefs(ctx)
+	for {
+		docRef, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to iterate document refs: %w", err)
+		}
+
+		// Recurse into sub-collections of this document first.
+		subIter := docRef.Collections(ctx)
+		for {
+			subColl, err := subIter.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("failed to list sub-collections: %v", err)
+			}
+			subPath := fmt.Sprintf("%s/%s/%s", collectionPath, docRef.ID, subColl.ID)
+			if err := a.deleteCollection(ctx, subPath); err != nil {
+				return fmt.Errorf("failed to delete sub-collection %s: %v", subColl.ID, err)
+			}
+		}
+
+		// Now delete the document itself.
+		if _, err := docRef.Delete(ctx); err != nil {
+			return fmt.Errorf("failed to delete document %s: %v", docRef.ID, err)
+		}
 	}
 	return nil
 }

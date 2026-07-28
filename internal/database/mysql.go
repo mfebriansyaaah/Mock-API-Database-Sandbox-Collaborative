@@ -1,4 +1,4 @@
-// Package database provides PostgreSQL database adapter implementation
+// Package database provides MySQL database adapter implementation
 
 package database
 
@@ -9,41 +9,40 @@ import (
 	"log"
 	"strings"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
 )
 
-// PostgreSQLClient implements DatabaseClient interface for PostgreSQL
-type PostgreSQLClient struct {
+// MySQLClient implements DatabaseClient interface for MySQL
+type MySQLClient struct {
 	db     *sql.DB
-	config *PostgreSQLConfig
+	config *MySQLConfig
 }
 
-// NewPostgreSQLClient creates a new PostgreSQL database client
-func NewPostgreSQLClient(ctx context.Context, config *PostgreSQLConfig) (*PostgreSQLClient, error) {
+// NewMySQLClient creates a new MySQL database client
+func NewMySQLClient(ctx context.Context, config *MySQLConfig) (*MySQLClient, error) {
 	if config == nil {
-		return nil, fmt.Errorf("PostgreSQL config cannot be nil")
+		return nil, fmt.Errorf("MySQL config cannot be nil")
 	}
 
 	// Build connection string
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		config.Host,
-		config.Port,
+	connStr := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=%t",
 		config.User,
 		config.Password,
+		config.Host,
+		config.Port,
 		config.Database,
-		config.SSLMode,
+		config.ParseTime,
 	)
 
-	db, err := sql.Open("postgres", connStr)
+	db, err := sql.Open("mysql", connStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open PostgreSQL connection: %v", err)
+		return nil, fmt.Errorf("failed to open MySQL connection: %w", err)
 	}
 
 	// Test connection
 	if err := db.PingContext(ctx); err != nil {
-		db.Close() // Close the connection on error
-		return nil, fmt.Errorf("failed to ping PostgreSQL: %v", err)
+		return nil, fmt.Errorf("failed to ping MySQL: %w", err)
 	}
 
 	// Configure connection pool
@@ -51,31 +50,31 @@ func NewPostgreSQLClient(ctx context.Context, config *PostgreSQLConfig) (*Postgr
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(0) // No lifetime limit
 
-	log.Printf("Successfully connected to PostgreSQL at %s:%s", config.Host, config.Port)
+	log.Printf("Successfully connected to MySQL at %s:%s", config.Host, config.Port)
 
-	return &PostgreSQLClient{
+	return &MySQLClient{
 		db:     db,
 		config: config,
 	}, nil
 }
 
 // Type returns the database type
-func (c *PostgreSQLClient) Type() DatabaseType {
-	return DatabaseTypePostgreSQL
+func (c *MySQLClient) Type() DatabaseType {
+	return DatabaseTypeMySQL
 }
 
 // Get retrieves a single document by ID from the specified table
-func (c *PostgreSQLClient) Get(ctx context.Context, tablePath string, id string) (Document, error) {
+func (c *MySQLClient) Get(ctx context.Context, tablePath string, id string) (Document, error) {
 	// Parse table path (format: sandbox/{projectId}/{table})
 	tableName, err := parseTablePath(tablePath)
 	if err != nil {
 		return nil, err
 	}
 
-	query := fmt.Sprintf("SELECT * FROM %s WHERE id = $1", tableName)
+	query := fmt.Sprintf("SELECT * FROM %s WHERE id = ?", tableName)
 	rows, err := c.db.QueryContext(ctx, query, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query PostgreSQL: %v", err)
+		return nil, fmt.Errorf("failed to query MySQL: %w", err)
 	}
 	defer rows.Close()
 
@@ -86,7 +85,7 @@ func (c *PostgreSQLClient) Get(ctx context.Context, tablePath string, id string)
 	// Get column names
 	columns, err := rows.Columns()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get columns: %v", err)
+		return nil, fmt.Errorf("failed to get columns: %w", err)
 	}
 
 	// Create a slice of interface{} to hold the values
@@ -98,7 +97,7 @@ func (c *PostgreSQLClient) Get(ctx context.Context, tablePath string, id string)
 
 	// Scan the row into the value pointers
 	if err := rows.Scan(valuePtrs...); err != nil {
-		return nil, fmt.Errorf("failed to scan row: %v", err)
+		return nil, fmt.Errorf("failed to scan row: %w", err)
 	}
 
 	// Convert to Document
@@ -118,36 +117,33 @@ func (c *PostgreSQLClient) Get(ctx context.Context, tablePath string, id string)
 
 // GetAll retrieves documents from the specified table.
 // Supports optional pagination via opts (Limit / Offset).
-func (c *PostgreSQLClient) GetAll(ctx context.Context, tablePath string, opts *GetAllOptions) ([]Document, error) {
+func (c *MySQLClient) GetAll(ctx context.Context, tablePath string, opts *GetAllOptions) ([]Document, error) {
 	// Parse table path (format: sandbox/{projectId}/{table})
 	tableName, err := parseTablePath(tablePath)
 	if err != nil {
 		return nil, err
 	}
 
-	// Defensive identifier quoting — table names come from the URL path so
-	// they can technically contain characters that would break the SQL string.
-	// We keep behaviour simple here; production hardening lives elsewhere.
 	query := fmt.Sprintf("SELECT * FROM %s", tableName)
 	args := []interface{}{}
 	if opts != nil && opts.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		query += " LIMIT ?"
 		args = append(args, opts.Limit)
 	}
 	if opts != nil && opts.Offset > 0 {
-		query += fmt.Sprintf(" OFFSET $%d", len(args)+1)
+		query += " OFFSET ?"
 		args = append(args, opts.Offset)
 	}
 	rows, err := c.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query PostgreSQL: %v", err)
+		return nil, fmt.Errorf("failed to query MySQL: %w", err)
 	}
 	defer rows.Close()
 
 	// Get column names
 	columns, err := rows.Columns()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get columns: %v", err)
+		return nil, fmt.Errorf("failed to get columns: %w", err)
 	}
 
 	var results []Document
@@ -161,7 +157,7 @@ func (c *PostgreSQLClient) GetAll(ctx context.Context, tablePath string, opts *G
 
 		// Scan the row into the value pointers
 		if err := rows.Scan(valuePtrs...); err != nil {
-			return nil, fmt.Errorf("failed to scan row: %v", err)
+			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
 
 		// Convert to Document
@@ -183,14 +179,28 @@ func (c *PostgreSQLClient) GetAll(ctx context.Context, tablePath string, opts *G
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %v", err)
+		return nil, fmt.Errorf("error iterating rows: %w", err)
 	}
 
 	return results, nil
 }
 
+// CountAll returns the total number of rows in the specified table.
+func (c *MySQLClient) CountAll(ctx context.Context, tablePath string) (int64, error) {
+	tableName, err := parseTablePath(tablePath)
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+	if err := c.db.QueryRowContext(ctx, query).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count rows in MySQL: %w", err)
+	}
+	return count, nil
+}
+
 // Create creates a new document in the specified table
-func (c *PostgreSQLClient) Create(ctx context.Context, tablePath string, id string, data Document) (string, error) {
+func (c *MySQLClient) Create(ctx context.Context, tablePath string, id string, data Document) (string, error) {
 	// Parse table path (format: sandbox/{projectId}/{table})
 	tableName, err := parseTablePath(tablePath)
 	if err != nil {
@@ -206,32 +216,30 @@ func (c *PostgreSQLClient) Create(ctx context.Context, tablePath string, id stri
 	columns := []string{}
 	placeholders := []string{}
 	values := []interface{}{}
-	idx := 1
 
 	for k, v := range data {
 		columns = append(columns, k)
-		placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+		placeholders = append(placeholders, "?")
 		values = append(values, v)
-		idx++
 	}
 
 	// Add ID column
 	columns = append(columns, "id")
-	placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+	placeholders = append(placeholders, "?")
 	values = append(values, id)
 
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tableName, strings.Join(columns, ", "), strings.Join(placeholders, ", "))
 
 	_, err = c.db.ExecContext(ctx, query, values...)
 	if err != nil {
-		return "", fmt.Errorf("failed to insert document: %v", err)
+		return "", fmt.Errorf("failed to insert document: %w", err)
 	}
 
 	return id, nil
 }
 
 // Update updates an existing document in the specified table
-func (c *PostgreSQLClient) Update(ctx context.Context, tablePath string, id string, data Document) error {
+func (c *MySQLClient) Update(ctx context.Context, tablePath string, id string, data Document) error {
 	// Parse table path (format: sandbox/{projectId}/{table})
 	tableName, err := parseTablePath(tablePath)
 	if err != nil {
@@ -241,49 +249,46 @@ func (c *PostgreSQLClient) Update(ctx context.Context, tablePath string, id stri
 	// Build UPDATE query
 	setClauses := []string{}
 	values := []interface{}{}
-	idx := 1
 
 	for k, v := range data {
 		if k != "id" { // Don't update ID
-			setClauses = append(setClauses, fmt.Sprintf("%s = $%d", k, idx))
+			setClauses = append(setClauses, fmt.Sprintf("%s = ?", k))
 			values = append(values, v)
-			idx++
 		}
 	}
 
 	// Add ID to WHERE clause
-	setClauses = append(setClauses, fmt.Sprintf("id = $%d", idx))
 	values = append(values, id)
 
-	query := fmt.Sprintf("UPDATE %s SET %s WHERE id = $%d", tableName, strings.Join(setClauses[:len(setClauses)-1], ", "), idx)
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE id = ?", tableName, strings.Join(setClauses, ", "))
 
 	_, err = c.db.ExecContext(ctx, query, values...)
 	if err != nil {
-		return fmt.Errorf("failed to update document: %v", err)
+		return fmt.Errorf("failed to update document: %w", err)
 	}
 
 	return nil
 }
 
 // Delete deletes a document from the specified table
-func (c *PostgreSQLClient) Delete(ctx context.Context, tablePath string, id string) error {
+func (c *MySQLClient) Delete(ctx context.Context, tablePath string, id string) error {
 	// Parse table path (format: sandbox/{projectId}/{table})
 	tableName, err := parseTablePath(tablePath)
 	if err != nil {
 		return err
 	}
 
-	query := fmt.Sprintf("DELETE FROM %s WHERE id = $1", tableName)
+	query := fmt.Sprintf("DELETE FROM %s WHERE id = ?", tableName)
 	_, err = c.db.ExecContext(ctx, query, id)
 	if err != nil {
-		return fmt.Errorf("failed to delete document: %v", err)
+		return fmt.Errorf("failed to delete document: %w", err)
 	}
 
 	return nil
 }
 
 // Close closes the database connection
-func (c *PostgreSQLClient) Close() error {
+func (c *MySQLClient) Close() error {
 	if c == nil {
 		return nil
 	}
@@ -294,6 +299,18 @@ func (c *PostgreSQLClient) Close() error {
 }
 
 // Ping checks if the database connection is alive
-func (c *PostgreSQLClient) Ping(ctx context.Context) error {
+func (c *MySQLClient) Ping(ctx context.Context) error {
 	return c.db.PingContext(ctx)
+}
+
+// ListCollections is not natively supported for MySQL sandbox collections.
+// Returns an empty slice so callers can fall back to local tracking.
+func (c *MySQLClient) ListCollections(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
+// DeleteProject is not supported for MySQL. Returns an error indicating the
+// operation is not available so callers can surface it gracefully.
+func (c *MySQLClient) DeleteProject(_ context.Context, _ string) error {
+	return fmt.Errorf("delete project is not supported for MySQL backend")
 }

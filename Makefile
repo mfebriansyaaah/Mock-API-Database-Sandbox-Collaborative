@@ -1,8 +1,9 @@
-SHELL  := /bin/bash
-.SHELLFLAGS := -euo pipefail -c
-BIN    := server
+SHELL  := powershell.exe
+.SHELLFLAGS := -NoProfile -NonInteractive -Command
+BIN    := Mock-API-Database-Sandbox-Collaborative.exe
 PKG    := ./...
 PORT   := 8080
+CRED   := Service_Account_Key.json
 
 # Go build flags for production
 GOFLAGS  := -trimpath
@@ -15,7 +16,7 @@ help:
 	@echo "  make tidy        - go mod tidy"
 	@echo "  make build       - build binary to $(BIN)"
 	@echo "  make build-linux - cross-compile for linux/amd64"
-	@echo "  make run         - run from source (loads .env automatically)"
+	@echo "  make run         - run from source"
 	@echo "  make test        - run unit tests"
 	@echo "  make vet         - go vet"
 	@echo "  make fmt         - gofmt -w"
@@ -26,13 +27,13 @@ tidy:
 	go mod tidy
 
 build: tidy
-	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN) .
+	$$env:CGO_ENABLED='0'; $$env:APP_ENV='production'; go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN) .
 
 build-linux: tidy
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN)-linux-amd64 .
+	$$env:CGO_ENABLED='0'; $$env:APP_ENV='production'; $$env:GOOS='linux'; $$env:GOARCH='amd64'; go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o server-linux-amd64 .
 
 run: tidy
-	go run .
+	go run . -credentials $(CRED)
 
 test:
 	go test -race -timeout 60s $(PKG)
@@ -44,16 +45,9 @@ fmt:
 	gofmt -w .
 
 clean:
-	rm -f $(BIN) $(BIN)-linux-amd64 server.out server.err
-	@echo "cleaned"
+	Remove-Item -Force -ErrorAction SilentlyContinue $(BIN); Remove-Item -Force -ErrorAction SilentlyContinue server-linux-amd64; Remove-Item -Force -ErrorAction SilentlyContinue server.out; Remove-Item -Force -ErrorAction SilentlyContinue server.err; echo "cleaned"
 
 smoke: build
-	@pkill -f './$(BIN)' 2>/dev/null || true
-	./$(BIN) > server.out 2> server.err &
-	@SERVER_PID=$$!; sleep 2; \
-	if curl -sf -o /dev/null -w '%{http_code}' "http://localhost:$(PORT)/hello" | grep -qE '^(200|201)$$'; then \
-		echo "SMOKE: PASS (status=$$(curl -s -o /dev/null -w '%{http_code}' http://localhost:$(PORT)/hello))"; \
-	else \
-		echo "SMOKE: FAILED — see server.err"; cat server.err; \
-	fi
-	@pkill -f './$(BIN)' 2>/dev/null || true
+	$$proc = Start-Process -NoNewWindow -PassThru -FilePath ".\$(BIN)" -ArgumentList "-credentials","$(CRED)"; Start-Sleep -Seconds 2; \
+	try { $$code = (Invoke-WebRequest -Uri "http://localhost:$(PORT)/hello" -UseBasicParsing -TimeoutSec 5).StatusCode; echo "SMOKE: PASS (status=$$code)" } catch { echo "SMOKE: FAILED — see output"; $$proc.Kill(); exit 1 }; \
+	$$proc.Kill()

@@ -19,6 +19,10 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true
       },
+      '/__api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true
+      },
       '/hello': {
         target: 'http://localhost:8080',
         changeOrigin: true

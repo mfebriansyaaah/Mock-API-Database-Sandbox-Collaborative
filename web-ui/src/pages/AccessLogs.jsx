@@ -86,6 +86,7 @@ export default function AccessLogs() {
                 placeholder="Filter by path…"
               />
             </div>
+            <span className="text-xs font-medium text-ink-500">Method:</span>
             <div className="w-32">
               <Select
                 value={filterMethod}
@@ -98,6 +99,7 @@ export default function AccessLogs() {
                 ))}
               </Select>
             </div>
+            <span className="text-xs font-medium text-ink-500">Status:</span>
             <div className="w-32">
               <Select
                 value={filterStatus}

@@ -54,6 +54,11 @@ type DatabaseClient interface {
 	// *GetAllOptions{Limit, Offset} to paginate.
 	GetAll(ctx context.Context, collectionPath string, opts *GetAllOptions) ([]Document, error)
 
+	// CountAll returns the total number of documents in a collection/table
+	// without fetching them. This is efficient — adapters should use native
+	// COUNT queries rather than iterating documents.
+	CountAll(ctx context.Context, collectionPath string) (int64, error)
+
 	// Create creates a new document in the specified collection/table
 	// If id is empty, the database should generate a new ID
 	Create(ctx context.Context, collectionPath string, id string, data Document) (string, error)
@@ -69,6 +74,17 @@ type DatabaseClient interface {
 
 	// Ping checks if the database connection is alive
 	Ping(ctx context.Context) error
+
+	// ListCollections returns the names of all subcollections under the given
+	// parent path. For Firestore this lists subcollections of a document; for
+	// SQL databases it lists tables in the schema (parentPath may be ignored).
+	// Returns an empty slice if the database type does not support listing.
+	ListCollections(ctx context.Context, parentPath string) ([]string, error)
+
+	// DeleteProject removes all data associated with a project — all
+	// sandbox collections/documents and API keys. Returns an error if the
+	// backend does not support this operation (e.g. SQL databases).
+	DeleteProject(ctx context.Context, projectId string) error
 }
 
 // DatabaseConfig holds configuration for database connections

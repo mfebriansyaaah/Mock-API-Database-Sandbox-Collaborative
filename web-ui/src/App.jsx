@@ -6,6 +6,7 @@ import Tables from '@/pages/Tables.jsx'
 import Documents from '@/pages/Documents.jsx'
 import DocumentDetail from '@/pages/DocumentDetail.jsx'
 import RESTTester from '@/pages/RESTTester.jsx'
+import ApiKeys from '@/pages/ApiKeys.jsx'
 import AccessLogs from '@/pages/AccessLogs.jsx'
 import Settings from '@/pages/Settings.jsx'
 import NotFound from '@/pages/NotFound.jsx'
@@ -35,6 +36,7 @@ export default function App() {
             element={<DocumentDetail />}
           />
           <Route path="/tester" element={<RESTTester />} />
+          <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/logs" element={<AccessLogs />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/404" element={<NotFound />} />

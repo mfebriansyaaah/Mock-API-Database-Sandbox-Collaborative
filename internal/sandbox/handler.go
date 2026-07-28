@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/database"
+	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/internal/database"
 )
 
 // SandboxHandler handles dynamic sandbox endpoints
@@ -26,6 +26,32 @@ func NewSandboxHandler(client database.DatabaseClient, projectID string) *Sandbo
 		client:    client,
 		projectID: projectID,
 	}
+}
+
+// HandleCount handles GET /sandbox/{projectId}/{table}/_count
+// Returns {"count": N} with the total number of documents in the collection.
+func (h *SandboxHandler) HandleCount(w http.ResponseWriter, r *http.Request) {
+	projectId := r.PathValue("projectId")
+	table := r.PathValue("table")
+
+	if projectId == "" || table == "" {
+		http.Error(w, "projectId and table are required", http.StatusBadRequest)
+		return
+	}
+
+	collectionPath := fmt.Sprintf("sandbox/%s/%s", projectId, table)
+	count, err := h.client.CountAll(r.Context(), collectionPath)
+	if err != nil {
+		if isQuotaError(err) {
+			http.Error(w, "Upstream quota exceeded. Please retry shortly.", http.StatusServiceUnavailable)
+			return
+		}
+		http.Error(w, fmt.Sprintf("Failed to count documents: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"count": count})
 }
 
 // HandleRequest handles dynamic sandbox requests
@@ -63,8 +89,8 @@ func (h *SandboxHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 // paginating with offset; we also surface a "nextOffset" hint so the UI
 // can implement infinite scroll.
 const (
-	defaultPageSize = 25
-	maxPageSize     = 100
+	defaultPageSize = 15
+	maxPageSize     = 30
 )
 
 // parseGetAllOptions extracts pagination parameters from the request.

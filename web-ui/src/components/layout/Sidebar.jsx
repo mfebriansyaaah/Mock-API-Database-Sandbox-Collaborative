@@ -5,7 +5,8 @@ import {
   Terminal,
   Activity,
   Settings,
-  Hexagon
+  Hexagon,
+  Key
 } from 'lucide-react'
 import { cn } from '@/utils/cn.js'
 
@@ -13,6 +14,7 @@ const nav = [
   { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/projects', label: 'Projects', icon: FolderTree, end: false },
   { to: '/tester', label: 'REST Tester', icon: Terminal, end: false },
+  { to: '/api-keys', label: 'API Keys', icon: Key, end: false },
   { to: '/logs', label: 'Access Logs', icon: Activity, end: false },
   { to: '/settings', label: 'Settings', icon: Settings, end: false }
 ]

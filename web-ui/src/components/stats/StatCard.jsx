@@ -17,7 +17,7 @@ export default function StatCard({ icon: Icon, label, value, hint, accent = 'bra
             {label}
           </div>
           <div className="mt-2 font-display text-3xl font-semibold tracking-tight">
-            <CountUp value={value} />
+            {typeof value === 'number' ? <CountUp value={value} /> : value}
           </div>
           {hint && (
             <div className="mt-1 text-xs text-ink-500">{hint}</div>

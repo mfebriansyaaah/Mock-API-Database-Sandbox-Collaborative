@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/logger"
+	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/internal/logger"
 )
 
 // fakeSubmitter is a thread-safe in-memory logger.Submitter used to verify

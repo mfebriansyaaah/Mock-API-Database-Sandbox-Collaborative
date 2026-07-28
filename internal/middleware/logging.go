@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/logger"
+	"github.com/mfebriansyaaah/Mock-API-Database-Sandbox-Collaborative/internal/logger"
 )
 
 // statusRecorder wraps http.ResponseWriter to capture the response status code

@@ -7,7 +7,9 @@ private-key.json
 *service-account*.json
 *Service_Account*.json
 *firebase-adminsdk*.json
-# Actual committed secret (rotate this key NOW if it was ever pushed)
+# Warn: a Service_Account_Key.json was present in early commits.
+# It is now gitignored. If it still exists on disk, delete it and
+# rotate the key — it should NOT live inside the project tree.
 Service_Account_Key.json
 # Local .env with real secrets — DO NOT commit. Use .env.example as template.
 /.env
@@ -22,10 +24,14 @@ Service_Account_Key.json
 *.key
 *.crt
 *.p12
+# Log files (any language)
+*.log
 
 # =========================================================
 # Go build artifacts
 # =========================================================
+# VS Code Go tools output directory (e.g. from go-coverage, gotests)
+__debug_bin*
 # Compiled binaries
 /server.exe
 /server
@@ -63,24 +69,35 @@ gocover/
 # Go workspace
 go.work
 go.work.sum
-# Vendoring (if used locally — not vendored yet)
-# vendor/
+# Vendoring — ignored by default (modules managed by go mod).
+# If you need reproducible builds (e.g. Cloud Run), remove this line
+# and commit the vendor/ directory instead.
+vendor/
 
 # =========================================================
 # IDE & editor
 # =========================================================
 .idea/
-.vscode/
 *.iml
 *.swp
 *.swo
 *~
+# VS Code — ignore everything inside .vscode/ EXCEPT extensions.json
+# so that recommended extensions propagate to all devs.
+.vscode/*
+!.vscode/extensions.json
 # Patch / merge backups
 *.bak
 *.orig
 *.rej
 # Per-developer Makefile overrides (e.g. PORT, BIN overrides)
 Makefile.local
+# direnv / nix-shell local env overrides
+.envrc
+.direnv/
+# Developer-specific start scripts
+start_*.ps1
+start_*.sh
 # Internal project planning / spec notes
 spec-notes.txt
 
@@ -96,7 +113,11 @@ node_modules/
 **/.DS_Store
 Thumbs.db
 desktop.ini
+$RECYCLE.BIN/
+*.lnk
 
+# =========================================================
+# End of .gitignore
 # =========================================================
 # Logs & runtime
 # =========================================================

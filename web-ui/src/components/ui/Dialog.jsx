@@ -13,7 +13,8 @@ export default function Dialog({
   onConfirm,
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
-  destructive = false
+  destructive = false,
+  disabled = false
 }) {
   useEffect(() => {
     if (!open) return
@@ -55,7 +56,8 @@ export default function Dialog({
           </div>
           <button
             onClick={onClose}
-            className="rounded p-1 text-ink-500 transition hover:bg-ink-100 dark:hover:bg-ink-800"
+            disabled={disabled}
+            className="rounded p-1 text-ink-500 transition hover:bg-ink-100 dark:hover:bg-ink-800 disabled:opacity-30"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -64,11 +66,11 @@ export default function Dialog({
         <div className="px-5 py-4">{children}</div>
         {(onConfirm || cancelLabel) && (
           <div className="flex items-center justify-end gap-2 border-t border-ink-200 bg-ink-50/60 px-5 py-3 dark:border-ink-800 dark:bg-ink-900/60">
-            <Button variant="ghost" onClick={onClose}>
+            <Button variant="ghost" onClick={onClose} disabled={disabled}>
               {cancelLabel}
             </Button>
             {onConfirm && (
-              <Button variant={destructive ? 'danger' : 'primary'} onClick={onConfirm}>
+              <Button variant={destructive ? 'danger' : 'primary'} onClick={onConfirm} disabled={disabled}>
                 {confirmLabel}
               </Button>
             )}
